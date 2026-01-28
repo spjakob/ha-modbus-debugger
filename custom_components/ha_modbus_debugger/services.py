@@ -147,6 +147,10 @@ async def setup_services(hass: HomeAssistant):
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
 
+        # Verify connection ONCE before scanning loop
+        if not await hub.connect():
+             raise ServiceValidationError(f"Could not connect to Hub {hub._config.get('name', '')}. Check IP/Port/Serial settings.")
+
         found_devices = []
 
         for unit_id in range(start_unit, end_unit + 1):
