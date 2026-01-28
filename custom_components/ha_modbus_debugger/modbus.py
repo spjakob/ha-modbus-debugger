@@ -37,6 +37,7 @@ class ModbusHub:
         self._lock = asyncio.Lock()
         self._connection_type = config[CONF_CONNECTION_TYPE]
         self._stats = {}
+        self.last_error = None
 
     def report_stat(self, unit_id: int, success: bool):
         """Update statistics for a unit."""
@@ -77,10 +78,15 @@ class ModbusHub:
         try:
             await self._client.connect()
         except ModbusException as exc:
+            self.last_error = str(exc)
             _LOGGER.error("Error connecting to modbus: %s", exc)
             return False
 
-        return self._client.connected
+        if not self._client.connected:
+            self.last_error = "Unknown connection failure (Socket closed?)"
+            return False
+
+        return True
 
     async def close(self) -> None:
         """Disconnect client."""

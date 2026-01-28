@@ -7,6 +7,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 
 from .const import DOMAIN
 from .modbus import ModbusHub
@@ -27,6 +28,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Could not connect to Modbus Hub %s at setup", entry.title)
 
     hass.data[DOMAIN][entry.entry_id] = hub
+
+    # Register the Hub Device so child devices can link to it
+    device_registry = dr.async_get(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        name=entry.title,
+        manufacturer="Generic Modbus",
+        model="Modbus Hub",
+        configuration_url=f"http://{entry.data.get('host')}" if entry.data.get('host') else None,
+    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
