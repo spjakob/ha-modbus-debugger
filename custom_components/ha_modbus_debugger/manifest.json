@@ -1,0 +1,13 @@
+{
+  "domain": "ha_modbus_debugger",
+  "name": "Modbus Debugger",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/generic/ha-modbus-debugger",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/generic/ha-modbus-debugger/issues",
+  "requirements": [
+    "pymodbus>=3.0.0"
+  ],
+  "version": "1.0.0"
+}
