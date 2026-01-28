@@ -53,16 +53,23 @@ async def setup_services(hass: HomeAssistant):
         count = call.data.get("count", 1)
         register_type = call.data.get("register_type", "holding")
         verbose = call.data.get("verbose", True)
+        extra_verbose = call.data.get("extra_verbose", False)
 
         trace_log = []
 
+        # Target info
+        target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
+
         if verbose:
-            trace_log.append(f"Checking connection to hub {hub._config.get('name')}...")
+            trace_log.append(f"Target: {hub._config.get('name')} ({target_info})")
+            trace_log.append("Verifying connection...")
 
         if not await hub.connect():
             error_msg = hub.last_error or "Unknown Error"
             if verbose:
                 trace_log.append(f"Connection Failed: {error_msg}")
+                if "111" in str(error_msg) or "Refused" in str(error_msg):
+                    trace_log.append("Check IP/Port. Ensure no other integration is holding the connection open.")
             return {
                 "error": "Connection Failed",
                 "reason": error_msg,
@@ -71,9 +78,10 @@ async def setup_services(hass: HomeAssistant):
 
         if verbose:
             trace_log.append("Connected.")
-            trace_log.append(
-                f"Reading {register_type} register {register} (count {count}) from unit {unit_id}..."
-            )
+            if extra_verbose:
+                trace_log.append(
+                    f"Sending Read Request: Unit={unit_id}, Address={register}, Count={count}, Type={register_type}"
+                )
 
         # Perform Read
         if register_type == "input":
@@ -185,19 +193,25 @@ async def setup_services(hass: HomeAssistant):
         end_unit = call.data.get("end_unit", 247)
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
-        verbose = call.data.get("verbose", False)
+        verbose = call.data.get("verbose", True)
+        extra_verbose = call.data.get("extra_verbose", False)
 
         trace_log = []
+        target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
+
         if verbose:
             trace_log.append(
-                f"Starting scan on {hub._config.get('name')}. Range {start_unit}-{end_unit}. Verifying connection..."
+                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}."
             )
+            trace_log.append("Verifying connection...")
 
         # Verify connection ONCE before scanning loop
         if not await hub.connect():
             error_msg = hub.last_error or "Unknown Connection Error"
             if verbose:
                 trace_log.append(f"Connection Failed: {error_msg}")
+                if "111" in str(error_msg) or "Refused" in str(error_msg):
+                    trace_log.append("Check IP/Port. Ensure no other integration is holding the connection open.")
 
             return {
                 "error": "Connection Failed",
@@ -229,7 +243,7 @@ async def setup_services(hass: HomeAssistant):
                 if verbose:
                     trace_log.append(f"Unit {unit_id}: Found (Value {val})")
             else:
-                if verbose:
+                if verbose and extra_verbose:
                     trace_log.append(f"Unit {unit_id}: No Response")
 
         return {

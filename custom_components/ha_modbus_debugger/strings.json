@@ -11,6 +11,7 @@
       },
       "tcp": {
         "title": "Configure TCP Connection",
+        "description": "Enter the IP address and port of your Modbus TCP Gateway or Device.",
         "data": {
           "host": "Host IP Address",
           "port": "Port",
@@ -19,12 +20,14 @@
       },
       "serial": {
         "title": "Configure Serial Connection",
+        "description": "Enter the serial port details for your Modbus RTU adapter.",
         "data": {
           "port": "Serial Port (e.g., /dev/ttyUSB0)",
           "baudrate": "Baudrate",
           "bytesize": "Byte Size",
           "parity": "Parity",
           "stopbits": "Stop Bits",
+          "serial_mode": "Serial Mode (ByteSize/Parity/StopBits)",
           "timeout": "Timeout (seconds)"
         }
       }
@@ -41,10 +44,12 @@
     "step": {
       "menu": {
         "title": "Modbus Debugger Options",
-        "description": "Manage sensors for this hub.",
+        "description": "Manage sensors and connection settings.",
         "menu_options": {
           "add_sensor": "Add a new Sensor",
-          "remove_sensor": "Remove existing Sensors"
+          "remove_sensor": "Manage/Remove Sensors",
+          "list_sensors": "List Configured Sensors",
+          "edit_connection": "Edit Connection Settings"
         }
       },
       "add_sensor": {
@@ -60,10 +65,23 @@
         }
       },
       "remove_sensor": {
-        "title": "Remove Sensors",
-        "description": "Select the sensors you want to delete.",
+        "title": "Manage Sensors",
+        "description": "Select the sensors you want to delete. If you don't want to delete any, just click Submit.",
         "data": {
           "sensors": "Sensors to Remove"
+        }
+      },
+      "list_sensors": {
+        "title": "Configured Sensors",
+        "description": "Here is a list of your configured sensors:\n\n{sensor_list}"
+      },
+      "edit_connection": {
+        "title": "Edit Connection",
+        "description": "Update connection settings (requires reload).",
+        "data": {
+          "host": "Host IP Address",
+          "port": "Port",
+          "timeout": "Timeout"
         }
       }
     }
