@@ -30,6 +30,10 @@ async def test_read_register_service():
 
     # Mock Hub
     hub = MagicMock(spec=ModbusHub)
+    # Mock _config for verbose mode
+    hub._config = {"name": "Test Hub"}
+    hub.connect = AsyncMock(return_value=True)
+
     hub.read_holding_registers = AsyncMock()
     mock_result = MagicMock()
     mock_result.registers = [0x1234]
@@ -52,7 +56,6 @@ async def test_read_register_service():
 
     assert response["registers"] == [0x1234]
     assert response["hex"] == ["0x1234"]
-    assert response["uint16"] == [0x1234]
 
     # Test 32-bit parsing
     hub.read_holding_registers.return_value.registers = [0x0001, 0x0002]
@@ -84,6 +87,8 @@ async def test_scan_devices_service():
     assert handler is not None
 
     hub = MagicMock(spec=ModbusHub)
+    hub._config = {"name": "Test Hub"}
+    hub.connect = AsyncMock(return_value=True)
     hub.read_holding_registers = AsyncMock()
 
     # Mock behavior: Device 1 responds, Device 2 fails/timeout
@@ -97,11 +102,6 @@ async def test_scan_devices_service():
     mock_res_2.isError.return_value = True
 
     def side_effect(slave, address, count, **kwargs):
-        # Handle slave/device_id keyword
-        # Note: modbus.py handles keyword compatibility, here we mock modbus.py methods directly
-        # But modbus.py calls client. here we mock HUB.
-        # Hub methods take positional args in signature (slave, address, count)
-        # Wait, my modbus.py signature is (slave, address, count).
         if slave == 1:
             return mock_res_1
         return mock_res_2

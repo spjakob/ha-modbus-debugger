@@ -50,6 +50,13 @@ read_register:
               value: holding
             - label: Input Register
               value: input
+    verbose:
+      name: Verbose Output
+      description: Include detailed connection trace in response.
+      required: false
+      default: true
+      selector:
+        boolean:
 
 scan_devices:
   name: Scan for Devices
@@ -104,3 +111,10 @@ scan_devices:
               value: holding
             - label: Input Register
               value: input
+    verbose:
+      name: Verbose Output
+      description: Include detailed scan trace in response.
+      required: false
+      default: false
+      selector:
+        boolean:

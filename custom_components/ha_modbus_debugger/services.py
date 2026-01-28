@@ -52,6 +52,28 @@ async def setup_services(hass: HomeAssistant):
         register = call.data["register"]
         count = call.data.get("count", 1)
         register_type = call.data.get("register_type", "holding")
+        verbose = call.data.get("verbose", True)
+
+        trace_log = []
+
+        if verbose:
+            trace_log.append(f"Checking connection to hub {hub._config.get('name')}...")
+
+        if not await hub.connect():
+            error_msg = hub.last_error or "Unknown Error"
+            if verbose:
+                trace_log.append(f"Connection Failed: {error_msg}")
+            return {
+                "error": "Connection Failed",
+                "reason": error_msg,
+                "trace": trace_log,
+            }
+
+        if verbose:
+            trace_log.append("Connected.")
+            trace_log.append(
+                f"Reading {register_type} register {register} (count {count}) from unit {unit_id}..."
+            )
 
         # Perform Read
         if register_type == "input":
@@ -60,12 +82,27 @@ async def setup_services(hass: HomeAssistant):
             result = await hub.read_holding_registers(unit_id, register, count)
 
         if result is None:
-            raise ServiceValidationError(
-                "Failed to read from Modbus device (Connection Error)."
-            )
+            error_msg = hub.last_error or "Connection lost during read"
+            if verbose:
+                trace_log.append(f"Read Failed: {error_msg}")
+
+            return {
+                "error": "Read Failed",
+                "reason": error_msg,
+                "trace": trace_log,
+            }
 
         if result.isError():
-            raise ServiceValidationError(f"Modbus Error: {result}")
+            if verbose:
+                trace_log.append(f"Modbus Error Response: {result}")
+            return {
+                "error": "Modbus Error",
+                "reason": str(result),
+                "trace": trace_log,
+            }
+
+        if verbose:
+            trace_log.append(f"Success. Received {len(result.registers)} registers.")
 
         # Parse Result
         registers = result.registers
@@ -74,6 +111,8 @@ async def setup_services(hass: HomeAssistant):
             "hex": [f"0x{r:04X}" for r in registers],
             "debug_info": f"Read {count} registers from Unit {unit_id}, Address {register} ({register_type}). Success.",
         }
+        if verbose:
+            response["trace"] = trace_log
 
         # Conversions
         # 16-bit
@@ -146,6 +185,28 @@ async def setup_services(hass: HomeAssistant):
         end_unit = call.data.get("end_unit", 247)
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
+        verbose = call.data.get("verbose", False)
+
+        trace_log = []
+        if verbose:
+            trace_log.append(
+                f"Starting scan on {hub._config.get('name')}. Range {start_unit}-{end_unit}. Verifying connection..."
+            )
+
+        # Verify connection ONCE before scanning loop
+        if not await hub.connect():
+            error_msg = hub.last_error or "Unknown Connection Error"
+            if verbose:
+                trace_log.append(f"Connection Failed: {error_msg}")
+
+            return {
+                "error": "Connection Failed",
+                "reason": error_msg,
+                "trace": trace_log,
+            }
+
+        if verbose:
+            trace_log.append("Connected. Beginning scan loop...")
 
         found_devices = []
 
@@ -165,11 +226,17 @@ async def setup_services(hass: HomeAssistant):
                         "hex": f"0x{val:04X}",
                     }
                 )
+                if verbose:
+                    trace_log.append(f"Unit {unit_id}: Found (Value {val})")
+            else:
+                if verbose:
+                    trace_log.append(f"Unit {unit_id}: No Response")
 
         return {
             "found_devices": found_devices,
             "count": len(found_devices),
             "scanned_range": f"{start_unit}-{end_unit}",
+            "trace": trace_log if verbose else [],
         }
 
     hass.services.async_register(

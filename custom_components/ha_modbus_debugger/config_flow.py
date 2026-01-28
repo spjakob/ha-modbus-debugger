@@ -108,12 +108,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data_schema=vol.Schema(
                     {
                         vol.Required(CONF_PORT): str,
-                        vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): int,
-                        vol.Required(CONF_BYTESIZE, default=DEFAULT_BYTESIZE): int,
-                        vol.Required(CONF_PARITY, default=DEFAULT_PARITY): vol.In(
-                            ["N", "E", "O", "M", "S"]
+                        vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
+                            [9600, 14400, 19200, 38400, 57600, 115200, 230400]
                         ),
-                        vol.Required(CONF_STOPBITS, default=DEFAULT_STOPBITS): int,
+                        vol.Required(CONF_BYTESIZE, default=DEFAULT_BYTESIZE): vol.In(
+                            [7, 8]
+                        ),
+                        vol.Required(CONF_PARITY, default=DEFAULT_PARITY): vol.In(
+                            ["N", "E", "O"]
+                        ),
+                        vol.Required(CONF_STOPBITS, default=DEFAULT_STOPBITS): vol.In(
+                            [1, 2]
+                        ),
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
                     }
                 ),
@@ -200,6 +206,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="remove_sensor",
             data_schema=vol.Schema(
-                {vol.Required("sensors"): cv.multi_select(sensor_names)}
+                {vol.Optional("sensors"): cv.multi_select(sensor_names)}
             ),
         )
