@@ -96,9 +96,14 @@ class ModbusHub:
 
         async with self._lock:
             try:
-                result = await self._client.read_holding_registers(
-                    address, count=count, slave=slave
-                )
+                try:
+                    result = await self._client.read_holding_registers(
+                        address, count=count, slave=slave
+                    )
+                except TypeError:
+                    result = await self._client.read_holding_registers(
+                        address, count=count, device_id=slave
+                    )
             except ModbusException as exc:
                 _LOGGER.error("Pymodbus: Error reading holding registers: %s", exc)
                 return None
@@ -114,9 +119,14 @@ class ModbusHub:
 
         async with self._lock:
             try:
-                result = await self._client.read_input_registers(
-                    address, count=count, slave=slave
-                )
+                try:
+                    result = await self._client.read_input_registers(
+                        address, count=count, slave=slave
+                    )
+                except TypeError:
+                    result = await self._client.read_input_registers(
+                        address, count=count, device_id=slave
+                    )
             except ModbusException as exc:
                 _LOGGER.error("Pymodbus: Error reading input registers: %s", exc)
                 return None

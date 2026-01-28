@@ -17,6 +17,7 @@ from .modbus import ModbusHub
 _LOGGER = logging.getLogger(__name__)
 
 SERVICE_READ_REGISTER = "read_register"
+SERVICE_SCAN_DEVICES = "scan_devices"
 
 
 async def setup_services(hass: HomeAssistant):
@@ -24,15 +25,8 @@ async def setup_services(hass: HomeAssistant):
     if hass.services.has_service(DOMAIN, SERVICE_READ_REGISTER):
         return
 
-    async def handle_read_register(call: ServiceCall) -> ServiceResponse:
-        """Handle the read_register service."""
+    async def get_hub(call: ServiceCall) -> ModbusHub:
         hub_id = call.data.get("hub_id")
-        unit_id = call.data.get("unit_id", 1)
-        register = call.data["register"]
-        count = call.data.get("count", 1)
-        register_type = call.data.get("register_type", "holding")
-
-        # Select Hub
         hubs = hass.data.get(DOMAIN, {})
         if not hubs:
             raise ServiceValidationError("No Modbus Hubs configured.")
@@ -43,16 +37,21 @@ async def setup_services(hass: HomeAssistant):
             if not hub:
                 raise ServiceValidationError(f"Hub {hub_id} not found.")
         else:
-            # Default to the first one if only one exists
             if len(hubs) == 1:
                 hub = next(iter(hubs.values()))
             else:
-                # Try to match by config entry id if passed as simple string, though selector returns ID
-                pass
-                if not hub:
-                    raise ServiceValidationError(
-                        "Multiple hubs found. Please specify hub_id."
-                    )
+                raise ServiceValidationError(
+                    "Multiple hubs found. Please specify hub_id."
+                )
+        return hub
+
+    async def handle_read_register(call: ServiceCall) -> ServiceResponse:
+        """Handle the read_register service."""
+        hub = await get_hub(call)
+        unit_id = call.data.get("unit_id", 1)
+        register = call.data["register"]
+        count = call.data.get("count", 1)
+        register_type = call.data.get("register_type", "holding")
 
         # Perform Read
         if register_type == "input":
@@ -137,5 +136,45 @@ async def setup_services(hass: HomeAssistant):
         DOMAIN,
         SERVICE_READ_REGISTER,
         handle_read_register,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def handle_scan_devices(call: ServiceCall) -> ServiceResponse:
+        """Handle the scan_devices service."""
+        hub = await get_hub(call)
+        start_unit = call.data.get("start_unit", 1)
+        end_unit = call.data.get("end_unit", 247)
+        register = call.data.get("register", 0)
+        register_type = call.data.get("register_type", "holding")
+
+        found_devices = []
+
+        for unit_id in range(start_unit, end_unit + 1):
+            if register_type == "input":
+                result = await hub.read_input_registers(unit_id, register, 1)
+            else:
+                result = await hub.read_holding_registers(unit_id, register, 1)
+
+            if result is not None and not result.isError():
+                val = result.registers[0]
+                found_devices.append(
+                    {
+                        "unit_id": unit_id,
+                        "register": register,
+                        "value": val,
+                        "hex": f"0x{val:04X}",
+                    }
+                )
+
+        return {
+            "found_devices": found_devices,
+            "count": len(found_devices),
+            "scanned_range": f"{start_unit}-{end_unit}",
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SCAN_DEVICES,
+        handle_scan_devices,
         supports_response=SupportsResponse.ONLY,
     )

@@ -139,7 +139,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry):
         """Initialize options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""
@@ -154,7 +154,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_add_sensor(self, user_input=None):
         """Add a sensor."""
         if user_input is not None:
-            sensors = self.config_entry.options.get(CONF_SENSORS, []).copy()
+            sensors = self._config_entry.options.get(CONF_SENSORS, []).copy()
             sensors.append(user_input)
             return self.async_create_entry(title="", data={CONF_SENSORS: sensors})
 
@@ -184,7 +184,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_remove_sensor(self, user_input=None):
         """Remove a sensor."""
-        sensors = self.config_entry.options.get(CONF_SENSORS, [])
+        sensors = self._config_entry.options.get(CONF_SENSORS, [])
         if not sensors:
             return await self.async_step_menu()
 

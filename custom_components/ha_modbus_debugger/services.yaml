@@ -4,8 +4,8 @@ read_register:
   fields:
     hub_id:
       name: Hub ID
-      description: The ID of the hub (Config Entry ID). If only one hub exists, it is auto-selected.
-      required: false
+      description: The Modbus Hub to use.
+      required: true
       selector:
         config_entry:
           integration: ha_modbus_debugger
@@ -18,6 +18,7 @@ read_register:
         number:
           min: 1
           max: 247
+          mode: box
     register:
       name: Register Address
       description: The address of the register to read.
@@ -26,6 +27,7 @@ read_register:
         number:
           min: 0
           max: 65535
+          mode: box
     count:
       name: Count
       description: Number of registers to read.
@@ -35,6 +37,7 @@ read_register:
         number:
           min: 1
           max: 125
+          mode: box
     register_type:
       name: Register Type
       description: Holding or Input Register.
@@ -43,5 +46,61 @@ read_register:
       selector:
         select:
           options:
-            - holding
-            - input
+            - label: Holding Register
+              value: holding
+            - label: Input Register
+              value: input
+
+scan_devices:
+  name: Scan for Devices
+  description: Scans the bus for Modbus devices by attempting to read a register from each Unit ID.
+  fields:
+    hub_id:
+      name: Hub ID
+      description: The Modbus Hub to use.
+      required: true
+      selector:
+        config_entry:
+          integration: ha_modbus_debugger
+    start_unit:
+      name: Start Unit ID
+      description: The Unit ID to start scanning from.
+      required: true
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 247
+          mode: box
+    end_unit:
+      name: End Unit ID
+      description: The Unit ID to end scanning at.
+      required: true
+      default: 247
+      selector:
+        number:
+          min: 1
+          max: 247
+          mode: box
+    register:
+      name: Register Address
+      description: The register address to read for verification.
+      required: false
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 65535
+          mode: box
+    register_type:
+      name: Register Type
+      description: The type of register to read.
+      required: false
+      default: holding
+      selector:
+        select:
+          options:
+            - label: Holding Register
+              value: holding
+            - label: Input Register
+              value: input
