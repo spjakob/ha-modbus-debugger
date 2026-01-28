@@ -1,0 +1,47 @@
+read_register:
+  name: Read Register
+  description: Reads a register from a Modbus device and displays the value in multiple formats.
+  fields:
+    hub_id:
+      name: Hub ID
+      description: The ID of the hub (Config Entry ID). If only one hub exists, it is auto-selected.
+      required: false
+      selector:
+        config_entry:
+          integration: ha_modbus_debugger
+    unit_id:
+      name: Unit ID
+      description: The Modbus Slave ID.
+      required: true
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 247
+    register:
+      name: Register Address
+      description: The address of the register to read.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 65535
+    count:
+      name: Count
+      description: Number of registers to read.
+      required: false
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 125
+    register_type:
+      name: Register Type
+      description: Holding or Input Register.
+      required: false
+      default: holding
+      selector:
+        select:
+          options:
+            - holding
+            - input
