@@ -50,6 +50,51 @@ read_register:
               value: holding
             - label: Input Register
               value: input
+    scan_profile:
+      name: Scan Profile
+      description: Select a predefined scan profile or Custom.
+      required: true
+      default: async_quick
+      selector:
+        select:
+          options:
+            - label: Quick Scan (Async)
+              value: async_quick
+            - label: Quick Scan (Sync)
+              value: sync_quick
+            - label: Custom
+              value: custom
+    custom_timeout:
+      name: Custom Timeout
+      description: Timeout in seconds (only for Custom profile).
+      required: false
+      default: 3.0
+      selector:
+        number:
+          min: 0.1
+          max: 60.0
+          step: 0.1
+          mode: box
+    custom_retries:
+      name: Custom Retries
+      description: Number of retries (only for Custom profile).
+      required: false
+      default: 3
+      selector:
+        number:
+          min: 0
+          max: 10
+          mode: box
+    custom_concurrency:
+      name: Custom Concurrency
+      description: Max concurrent requests (only for Custom profile).
+      required: false
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
     verbosity:
       name: Verbose Level
       description: Control the level of detail in the output.

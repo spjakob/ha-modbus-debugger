@@ -11,6 +11,14 @@ from pymodbus.client import (
 from pymodbus.exceptions import ModbusException
 from pymodbus.pdu import ExceptionResponse, ModbusPDU
 
+try:
+    from pymodbus.transaction import ModbusRtuFramer, ModbusSocketFramer
+except ImportError:
+    try:
+        from pymodbus.framer import ModbusRtuFramer, ModbusSocketFramer
+    except ImportError:
+        from pymodbus.framer import FramerRTU as ModbusRtuFramer, FramerSocket as ModbusSocketFramer
+
 from .const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
@@ -22,6 +30,7 @@ from .const import (
     CONF_TIMEOUT,
     CONNECTION_TYPE_TCP,
     CONNECTION_TYPE_SERIAL,
+    CONF_RTU_OVER_TCP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,9 +69,14 @@ class ModbusHub:
                 return True
 
         if self._connection_type == CONNECTION_TYPE_TCP:
+            framer = ModbusSocketFramer
+            if self._config.get(CONF_RTU_OVER_TCP, False):
+                framer = ModbusRtuFramer
+
             self._client = AsyncModbusTcpClient(
                 self._config[CONF_HOST],
                 port=self._config[CONF_PORT],
+                framer=framer,
                 timeout=self._config.get(CONF_TIMEOUT, 3),
             )
         elif self._connection_type == CONNECTION_TYPE_SERIAL:
@@ -77,11 +91,12 @@ class ModbusHub:
 
         try:
             await self._client.connect()
-        except ModbusException as exc:
-            self.last_error = str(exc)
+        except Exception as exc:  # pylint: disable=broad-except
+            self.last_error = f"{type(exc).__name__}: {str(exc)}"
             _LOGGER.error("Error connecting to modbus: %s", exc)
             # Force client recreation on next attempt to clear stuck socket state
-            self._client.close()
+            if self._client:
+                self._client.close()
             self._client = None
             return False
 
@@ -104,7 +119,8 @@ class ModbusHub:
     ) -> Union[ModbusPDU, ExceptionResponse, None]:
         """Read holding registers."""
         if not self._client or not self._client.connected:
-            await self.connect()
+            if not await self.connect():
+                return None
 
         async with self._lock:
             try:
@@ -116,7 +132,8 @@ class ModbusHub:
                     result = await self._client.read_holding_registers(
                         address, count=count, device_id=slave
                     )
-            except ModbusException as exc:
+            except Exception as exc:  # pylint: disable=broad-except
+                self.last_error = f"{type(exc).__name__}: {str(exc)}"
                 _LOGGER.error("Pymodbus: Error reading holding registers: %s", exc)
                 return None
 
@@ -127,7 +144,8 @@ class ModbusHub:
     ) -> Union[ModbusPDU, ExceptionResponse, None]:
         """Read input registers."""
         if not self._client or not self._client.connected:
-            await self.connect()
+            if not await self.connect():
+                return None
 
         async with self._lock:
             try:
@@ -139,7 +157,8 @@ class ModbusHub:
                     result = await self._client.read_input_registers(
                         address, count=count, device_id=slave
                     )
-            except ModbusException as exc:
+            except Exception as exc:  # pylint: disable=broad-except
+                self.last_error = f"{type(exc).__name__}: {str(exc)}"
                 _LOGGER.error("Pymodbus: Error reading input registers: %s", exc)
                 return None
 

@@ -33,6 +33,7 @@ from .const import (
     CONF_COUNT,
     CONF_DATA_TYPE,
     CONF_SCAN_INTERVAL,
+    CONF_RTU_OVER_TCP,
     DATA_TYPE_INT16,
     DATA_TYPE_UINT16,
     DATA_TYPE_INT32,
@@ -81,6 +82,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_HOST): str,
                         vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
+                        vol.Optional(CONF_RTU_OVER_TCP, default=False): bool,
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
                     }
                 ),

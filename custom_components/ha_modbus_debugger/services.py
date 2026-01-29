@@ -2,6 +2,7 @@
 
 import logging
 import struct
+import asyncio
 
 from homeassistant.core import (
     HomeAssistant,
@@ -86,10 +87,14 @@ async def setup_services(hass: HomeAssistant):
                 )
 
         # Perform Read
-        if register_type == "input":
-            result = await hub.read_input_registers(unit_id, register, count)
-        else:
-            result = await hub.read_holding_registers(unit_id, register, count)
+        try:
+            if register_type == "input":
+                result = await hub.read_input_registers(unit_id, register, count)
+            else:
+                result = await hub.read_holding_registers(unit_id, register, count)
+        except Exception as exc:
+            result = None
+            hub.last_error = f"Unexpected Error: {str(exc)}"
 
         if result is None:
             error_msg = hub.last_error or "Connection lost during read"
@@ -196,6 +201,11 @@ async def setup_services(hass: HomeAssistant):
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
 
+        scan_profile = call.data.get("scan_profile", "async_quick")
+        custom_timeout = float(call.data.get("custom_timeout", 3.0))
+        custom_retries = int(call.data.get("custom_retries", 3))
+        custom_concurrency = int(call.data.get("custom_concurrency", 10))
+
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
         show_debug = verbosity == "debug"
@@ -203,9 +213,26 @@ async def setup_services(hass: HomeAssistant):
         trace_log = []
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
 
+        # Profile Parsing
+        timeout = 0.1
+        retries = 0
+        concurrency = 50
+        is_async = True
+
+        if scan_profile == "sync_quick":
+            timeout = 0.1
+            retries = 0
+            concurrency = 1
+            is_async = False
+        elif scan_profile == "custom":
+            timeout = custom_timeout
+            retries = custom_retries
+            concurrency = custom_concurrency
+            is_async = True
+
         if show_trace:
             trace_log.append(
-                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}."
+                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}. Profile: {scan_profile}"
             )
             trace_log.append("Verifying connection...")
 
@@ -226,32 +253,79 @@ async def setup_services(hass: HomeAssistant):
         if show_trace:
             trace_log.append("Connected. Beginning scan loop...")
 
+        # Suppress logging
+        pymodbus_logger = logging.getLogger("pymodbus")
+        original_level = pymodbus_logger.level
+        pymodbus_logger.setLevel(logging.CRITICAL)
+
+        # Adjust timeout if possible
+        old_timeout = None
+        if hub._client and hasattr(hub._client, "comm_params"):
+            old_timeout = hub._client.comm_params.timeout
+            hub._client.comm_params.timeout = timeout
+
         found_devices = []
+        semaphore = asyncio.Semaphore(concurrency)
 
+        async def scan_unit(unit_id):
+            async with semaphore:
+                # Retry logic
+                for attempt in range(retries + 1):
+                    if show_debug:
+                        trace_log.append(f"Unit {unit_id}: Scanning (Attempt {attempt + 1}/{retries + 1})...")
+
+                    try:
+                        if register_type == "input":
+                            result = await hub.read_input_registers(unit_id, register, 1)
+                        else:
+                            result = await hub.read_holding_registers(unit_id, register, 1)
+                    except Exception as exc:
+                        result = None
+                        if show_debug:
+                            trace_log.append(f"Unit {unit_id}: Exception: {str(exc)}")
+
+                    if result is not None and not result.isError():
+                        val = result.registers[0]
+                        found_devices.append(
+                            {
+                                "unit_id": unit_id,
+                                "register": register,
+                                "value": val,
+                                "hex": f"0x{val:04X}",
+                            }
+                        )
+                        if show_trace:
+                            trace_log.append(f"Unit {unit_id}: Found (Value {val})")
+                        return  # Success
+
+                    # If failed, we loop to retry.
+                    # If it was the last attempt, log failure if debug.
+                    if attempt == retries:
+                        if show_debug:
+                            reason = "No Response"
+                            if result and result.isError():
+                                reason = f"Modbus Error {result}"
+                            elif hub.last_error:
+                                reason = hub.last_error
+                            trace_log.append(f"Unit {unit_id}: Failed. Reason: {reason}")
+
+        tasks = []
         for unit_id in range(start_unit, end_unit + 1):
-            if register_type == "input":
-                result = await hub.read_input_registers(unit_id, register, 1)
-            else:
-                result = await hub.read_holding_registers(unit_id, register, 1)
+            tasks.append(scan_unit(unit_id))
 
-            if result is not None and not result.isError():
-                val = result.registers[0]
-                found_devices.append(
-                    {
-                        "unit_id": unit_id,
-                        "register": register,
-                        "value": val,
-                        "hex": f"0x{val:04X}",
-                    }
-                )
-                if show_trace:
-                    trace_log.append(f"Unit {unit_id}: Found (Value {val})")
-            else:
-                if show_debug:
-                    trace_log.append(f"Unit {unit_id}: No Response")
+        if is_async:
+            await asyncio.gather(*tasks)
+        else:
+            for t in tasks:
+                await t
+
+        # Restore logging and timeout
+        pymodbus_logger.setLevel(original_level)
+        if old_timeout is not None:
+            hub._client.comm_params.timeout = old_timeout
 
         return {
-            "found_devices": found_devices,
+            "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),
             "count": len(found_devices),
             "scanned_range": f"{start_unit}-{end_unit}",
             "trace": trace_log if show_trace else [],

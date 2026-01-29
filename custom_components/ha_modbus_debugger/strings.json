@@ -15,6 +15,7 @@
         "data": {
           "host": "Host IP Address",
           "port": "Port",
+          "rtu_over_tcp": "RTU over TCP",
           "timeout": "Timeout (seconds)"
         }
       },
