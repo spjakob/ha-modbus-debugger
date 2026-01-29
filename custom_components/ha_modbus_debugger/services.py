@@ -52,21 +52,23 @@ async def setup_services(hass: HomeAssistant):
         register = call.data["register"]
         count = call.data.get("count", 1)
         register_type = call.data.get("register_type", "holding")
-        verbose = call.data.get("verbose", True)
-        extra_verbose = call.data.get("extra_verbose", False)
+
+        verbosity = call.data.get("verbosity", "detailed")
+        show_trace = verbosity in ["detailed", "debug"]
+        show_debug = verbosity == "debug"
 
         trace_log = []
 
         # Target info
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
 
-        if verbose:
+        if show_trace:
             trace_log.append(f"Target: {hub._config.get('name')} ({target_info})")
             trace_log.append("Verifying connection...")
 
         if not await hub.connect():
             error_msg = hub.last_error or "Unknown Error"
-            if verbose:
+            if show_trace:
                 trace_log.append(f"Connection Failed: {error_msg}")
                 if "111" in str(error_msg) or "Refused" in str(error_msg):
                     trace_log.append("Check IP/Port. Ensure no other integration is holding the connection open.")
@@ -76,9 +78,9 @@ async def setup_services(hass: HomeAssistant):
                 "trace": trace_log,
             }
 
-        if verbose:
+        if show_trace:
             trace_log.append("Connected.")
-            if extra_verbose:
+            if show_debug:
                 trace_log.append(
                     f"Sending Read Request: Unit={unit_id}, Address={register}, Count={count}, Type={register_type}"
                 )
@@ -91,7 +93,7 @@ async def setup_services(hass: HomeAssistant):
 
         if result is None:
             error_msg = hub.last_error or "Connection lost during read"
-            if verbose:
+            if show_trace:
                 trace_log.append(f"Read Failed: {error_msg}")
 
             return {
@@ -101,7 +103,7 @@ async def setup_services(hass: HomeAssistant):
             }
 
         if result.isError():
-            if verbose:
+            if show_trace:
                 trace_log.append(f"Modbus Error Response: {result}")
             return {
                 "error": "Modbus Error",
@@ -109,7 +111,7 @@ async def setup_services(hass: HomeAssistant):
                 "trace": trace_log,
             }
 
-        if verbose:
+        if show_trace:
             trace_log.append(f"Success. Received {len(result.registers)} registers.")
 
         # Parse Result
@@ -119,7 +121,7 @@ async def setup_services(hass: HomeAssistant):
             "hex": [f"0x{r:04X}" for r in registers],
             "debug_info": f"Read {count} registers from Unit {unit_id}, Address {register} ({register_type}). Success.",
         }
-        if verbose:
+        if show_trace:
             response["trace"] = trace_log
 
         # Conversions
@@ -193,13 +195,15 @@ async def setup_services(hass: HomeAssistant):
         end_unit = call.data.get("end_unit", 247)
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
-        verbose = call.data.get("verbose", True)
-        extra_verbose = call.data.get("extra_verbose", False)
+
+        verbosity = call.data.get("verbosity", "basic")
+        show_trace = verbosity in ["detailed", "debug"]
+        show_debug = verbosity == "debug"
 
         trace_log = []
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
 
-        if verbose:
+        if show_trace:
             trace_log.append(
                 f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}."
             )
@@ -208,7 +212,7 @@ async def setup_services(hass: HomeAssistant):
         # Verify connection ONCE before scanning loop
         if not await hub.connect():
             error_msg = hub.last_error or "Unknown Connection Error"
-            if verbose:
+            if show_trace:
                 trace_log.append(f"Connection Failed: {error_msg}")
                 if "111" in str(error_msg) or "Refused" in str(error_msg):
                     trace_log.append("Check IP/Port. Ensure no other integration is holding the connection open.")
@@ -219,7 +223,7 @@ async def setup_services(hass: HomeAssistant):
                 "trace": trace_log,
             }
 
-        if verbose:
+        if show_trace:
             trace_log.append("Connected. Beginning scan loop...")
 
         found_devices = []
@@ -240,17 +244,17 @@ async def setup_services(hass: HomeAssistant):
                         "hex": f"0x{val:04X}",
                     }
                 )
-                if verbose:
+                if show_trace:
                     trace_log.append(f"Unit {unit_id}: Found (Value {val})")
             else:
-                if verbose and extra_verbose:
+                if show_debug:
                     trace_log.append(f"Unit {unit_id}: No Response")
 
         return {
             "found_devices": found_devices,
             "count": len(found_devices),
             "scanned_range": f"{start_unit}-{end_unit}",
-            "trace": trace_log if verbose else [],
+            "trace": trace_log if show_trace else [],
         }
 
     hass.services.async_register(

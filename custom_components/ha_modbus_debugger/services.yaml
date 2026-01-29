@@ -50,20 +50,20 @@ read_register:
               value: holding
             - label: Input Register
               value: input
-    verbose:
-      name: Verbose Output
-      description: Show connection details and failure reasons.
-      required: false
-      default: true
+    verbosity:
+      name: Verbose Level
+      description: Control the level of detail in the output.
+      required: true
+      default: detailed
       selector:
-        boolean:
-    extra_verbose:
-      name: Extra Verbose Trace
-      description: Show detailed communication steps (requires Verbose enabled).
-      required: false
-      default: false
-      selector:
-        boolean:
+        select:
+          options:
+            - label: Basic (Result Only)
+              value: basic
+            - label: Detailed (Connection Info)
+              value: detailed
+            - label: Debug (Full Trace)
+              value: debug
 
 scan_devices:
   name: Scan for Devices
@@ -118,17 +118,17 @@ scan_devices:
               value: holding
             - label: Input Register
               value: input
-    verbose:
-      name: Verbose Output
-      description: Show connection summary.
-      required: false
-      default: true
+    verbosity:
+      name: Verbose Level
+      description: Control the level of detail in the output.
+      required: true
+      default: basic
       selector:
-        boolean:
-    extra_verbose:
-      name: Extra Verbose Trace
-      description: Log every scan attempt (requires Verbose enabled).
-      required: false
-      default: false
-      selector:
-        boolean:
+        select:
+          options:
+            - label: Basic (Summary Only)
+              value: basic
+            - label: Detailed (Connection Info)
+              value: detailed
+            - label: Debug (Log Every Device)
+              value: debug

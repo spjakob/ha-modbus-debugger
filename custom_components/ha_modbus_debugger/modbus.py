@@ -80,10 +80,16 @@ class ModbusHub:
         except ModbusException as exc:
             self.last_error = str(exc)
             _LOGGER.error("Error connecting to modbus: %s", exc)
+            # Force client recreation on next attempt to clear stuck socket state
+            self._client.close()
+            self._client = None
             return False
 
         if not self._client.connected:
             self.last_error = "Unknown connection failure (Socket closed?)"
+            # Force client recreation
+            self._client.close()
+            self._client = None
             return False
 
         return True
