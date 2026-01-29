@@ -52,9 +52,16 @@ read_register:
               value: input
     verbose:
       name: Verbose Output
-      description: Include detailed connection trace in response.
+      description: Show connection details and failure reasons.
       required: false
       default: true
+      selector:
+        boolean:
+    extra_verbose:
+      name: Extra Verbose Trace
+      description: Show detailed communication steps (requires Verbose enabled).
+      required: false
+      default: false
       selector:
         boolean:
 
@@ -113,7 +120,14 @@ scan_devices:
               value: input
     verbose:
       name: Verbose Output
-      description: Include detailed scan trace in response.
+      description: Show connection summary.
+      required: false
+      default: true
+      selector:
+        boolean:
+    extra_verbose:
+      name: Extra Verbose Trace
+      description: Log every scan attempt (requires Verbose enabled).
       required: false
       default: false
       selector:

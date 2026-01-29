@@ -26,9 +26,6 @@ from .const import (
     CONNECTION_TYPE_SERIAL,
     DEFAULT_PORT,
     DEFAULT_BAUDRATE,
-    DEFAULT_BYTESIZE,
-    DEFAULT_PARITY,
-    DEFAULT_STOPBITS,
     DEFAULT_TIMEOUT,
     CONF_SENSORS,
     CONF_UNIT_ID,
@@ -109,27 +106,30 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     {
                         vol.Required(CONF_PORT): str,
                         vol.Required(CONF_BAUDRATE, default=DEFAULT_BAUDRATE): vol.In(
-                            [9600, 14400, 19200, 38400, 57600, 115200, 230400]
+                            [1200, 2400, 4800, 9600, 14400, 19200, 38400, 57600, 115200]
                         ),
-                        vol.Required(CONF_BYTESIZE, default=DEFAULT_BYTESIZE): vol.In(
-                            [7, 8]
-                        ),
-                        vol.Required(CONF_PARITY, default=DEFAULT_PARITY): vol.In(
-                            ["N", "E", "O"]
-                        ),
-                        vol.Required(CONF_STOPBITS, default=DEFAULT_STOPBITS): vol.In(
-                            [1, 2]
+                        vol.Required("serial_mode", default="8N1"): vol.In(
+                            ["8N1", "8E1", "8O1", "8N2", "7E1", "7O1"]
                         ),
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
                     }
                 ),
             )
 
+        # Parse serial_mode
+        mode = user_input.pop("serial_mode")
+        bytesize = int(mode[0])
+        parity = mode[1]
+        stopbits = int(mode[2])
+
         return self.async_create_entry(
             title=self._name,
             data={
                 CONF_CONNECTION_TYPE: CONNECTION_TYPE_SERIAL,
                 CONF_NAME: self._name,
+                CONF_BYTESIZE: bytesize,
+                CONF_PARITY: parity,
+                CONF_STOPBITS: stopbits,
                 **user_input,
             },
         )
@@ -154,7 +154,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_menu(self, user_input=None):
         """Show the menu."""
         return self.async_show_menu(
-            step_id="menu", menu_options=["add_sensor", "remove_sensor"]
+            step_id="menu",
+            menu_options=[
+                "add_sensor",
+                "remove_sensor",
+                "list_sensors",
+                "edit_connection",
+            ],
         )
 
     async def async_step_add_sensor(self, user_input=None):
@@ -207,5 +213,51 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="remove_sensor",
             data_schema=vol.Schema(
                 {vol.Optional("sensors"): cv.multi_select(sensor_names)}
+            ),
+        )
+
+    async def async_step_list_sensors(self, user_input=None):
+        """List configured sensors."""
+        sensors = self._config_entry.options.get(CONF_SENSORS, [])
+        sensor_list = "\n".join(
+            [
+                f"- **{s[CONF_NAME]}**: Unit {s[CONF_UNIT_ID]}, Reg {s[CONF_REGISTER]}"
+                for s in sensors
+            ]
+        )
+        if not sensor_list:
+            sensor_list = "No sensors configured."
+
+        return self.async_show_form(
+            step_id="list_sensors",
+            description_placeholders={"sensor_list": sensor_list},
+            last_step=False,
+        )
+
+    async def async_step_edit_connection(self, user_input=None):
+        """Edit connection settings."""
+        if user_input is not None:
+            # We must update the main config entry data
+            new_data = self._config_entry.data.copy()
+            new_data.update(user_input)
+            self.hass.config_entries.async_update_entry(
+                self._config_entry, data=new_data
+            )
+            # Reload entry to apply changes
+            await self.hass.config_entries.async_reload(self._config_entry.entry_id)
+            return self.async_create_entry(title="", data={})
+
+        current_host = self._config_entry.data.get(CONF_HOST)
+        current_port = self._config_entry.data.get(CONF_PORT)
+        current_timeout = self._config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+
+        return self.async_show_form(
+            step_id="edit_connection",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=current_host): str,
+                    vol.Required(CONF_PORT, default=current_port): int,
+                    vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
+                }
             ),
         )
