@@ -2,12 +2,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from custom_components.ha_modbus_debugger.modbus import ModbusHub
 from custom_components.ha_modbus_debugger.const import (
-    CONF_CONNECTION_TYPE,
-    CONF_HOST,
-    CONF_PORT,
-    CONNECTION_TYPE_TCP,
+    CONF_CONNECTION_TYPE, CONF_HOST, CONF_PORT, CONNECTION_TYPE_TCP, CONF_RTU_OVER_TCP
 )
-
 
 @pytest.mark.asyncio
 async def test_connect_tcp():
@@ -15,11 +11,10 @@ async def test_connect_tcp():
         CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
         CONF_HOST: "127.0.0.1",
         CONF_PORT: 502,
+        CONF_RTU_OVER_TCP: False
     }
 
-    with patch(
-        "custom_components.ha_modbus_debugger.modbus.AsyncModbusTcpClient"
-    ) as mock_client_cls:
+    with patch("custom_components.ha_modbus_debugger.modbus.AsyncModbusTcpClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
         mock_client.connected = True
@@ -27,7 +22,6 @@ async def test_connect_tcp():
         hub = ModbusHub(config)
         assert await hub.connect() is True
         mock_client.connect.assert_called_once()
-
 
 @pytest.mark.asyncio
 async def test_read_holding_registers():
@@ -37,9 +31,7 @@ async def test_read_holding_registers():
         CONF_PORT: 502,
     }
 
-    with patch(
-        "custom_components.ha_modbus_debugger.modbus.AsyncModbusTcpClient"
-    ) as mock_client_cls:
+    with patch("custom_components.ha_modbus_debugger.modbus.AsyncModbusTcpClient") as mock_client_cls:
         mock_client = mock_client_cls.return_value
         mock_client.connect = AsyncMock()
         mock_client.connected = True
@@ -57,7 +49,6 @@ async def test_read_holding_registers():
         result = await hub.read_holding_registers(1, 0, 1)
         assert result == mock_response
         assert result.registers == [123]
-
 
 @pytest.mark.asyncio
 async def test_stats():

@@ -1,20 +1,16 @@
 import sys
 from unittest.mock import MagicMock
 
-
 # Define dummy classes for inheritance
 class MockEntity:
     pass
-
 
 class MockCoordinatorEntity(MockEntity):
     def __init__(self, coordinator):
         self.coordinator = coordinator
 
-
 class MockSensorEntity(MockEntity):
     pass
-
 
 class MockDataUpdateCoordinator:
     def __init__(

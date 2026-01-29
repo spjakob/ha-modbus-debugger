@@ -2,6 +2,7 @@
 
 import logging
 import struct
+import asyncio
 
 from homeassistant.core import (
     HomeAssistant,
@@ -208,8 +209,7 @@ async def setup_services(hass: HomeAssistant):
         if scan_profile == "custom":
             timeout = custom_timeout
             concurrency = custom_concurrency
-            # Async if concurrency > 1? Actually the profile is "custom", logic below handles concurrency.
-            is_async = True # Assume custom implies async capability, or we can treat concurrency=1 as sync.
+            is_async = True
         elif scan_profile == "sync_quick":
             timeout = 0.1
             concurrency = 1
@@ -248,24 +248,16 @@ async def setup_services(hass: HomeAssistant):
         # Suppress logging
         logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
 
-        # Apply timeout hack?
-        # Since hub._client is shared, modifying timeout is risky if other ops happen.
-        # But we are in a service call.
-        # Ideally we create a NEW client for scanning or accept the risk.
-        # hub._client.comm_params.timeout = timeout ?
-        # Pymodbus 3.x stores params in comm_params.
+        # Apply timeout hack
         original_timeout = None
         try:
             if hasattr(hub._client, "comm_params"):
                  original_timeout = hub._client.comm_params.timeout_connect
                  hub._client.comm_params.timeout_connect = timeout
-            # Also read timeout?
         except Exception:
             pass
 
         found_devices = []
-
-        import asyncio
 
         async def scan_unit(unit_id):
             if register_type == "input":
@@ -299,9 +291,6 @@ async def setup_services(hass: HomeAssistant):
                         found_devices.append(res)
                         if show_trace:
                             trace_log.append(f"Unit {res['unit_id']}: Found")
-                    elif show_debug:
-                         # We can't easily log which ID failed in gather without wrapping, but order is preserved
-                         pass
             else:
                 # Serial loop
                 for unit_id in range(start_unit, end_unit + 1):

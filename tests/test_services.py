@@ -116,7 +116,9 @@ async def test_scan_devices_service():
         "start_unit": 1,
         "end_unit": 2,
         "register": 0,
-        "register_type": "holding"
+        "register_type": "holding",
+        # Use sync profile for test to avoid complex mocking of asyncio.gather/Semaphore
+        "scan_profile": "sync_quick"
     }
 
     response = await handler(call)
