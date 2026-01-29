@@ -11,6 +11,14 @@ from pymodbus.client import (
 from pymodbus.exceptions import ModbusException
 from pymodbus.pdu import ExceptionResponse, ModbusPDU
 
+try:
+    from pymodbus.transaction import ModbusRtuFramer, ModbusSocketFramer
+except ImportError:
+    try:
+        from pymodbus.framer import ModbusRtuFramer, ModbusSocketFramer
+    except ImportError:
+        from pymodbus.framer import FramerRTU as ModbusRtuFramer, FramerSocket as ModbusSocketFramer
+
 from .const import (
     CONF_CONNECTION_TYPE,
     CONF_HOST,
@@ -22,6 +30,7 @@ from .const import (
     CONF_TIMEOUT,
     CONNECTION_TYPE_TCP,
     CONNECTION_TYPE_SERIAL,
+    CONF_RTU_OVER_TCP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,9 +69,14 @@ class ModbusHub:
                 return True
 
         if self._connection_type == CONNECTION_TYPE_TCP:
+            framer = ModbusSocketFramer
+            if self._config.get(CONF_RTU_OVER_TCP, False):
+                framer = ModbusRtuFramer
+
             self._client = AsyncModbusTcpClient(
                 self._config[CONF_HOST],
                 port=self._config[CONF_PORT],
+                framer=framer,
                 timeout=self._config.get(CONF_TIMEOUT, 3),
             )
         elif self._connection_type == CONNECTION_TYPE_SERIAL:

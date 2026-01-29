@@ -91,6 +91,11 @@ async def test_scan_devices_service():
     hub.connect = AsyncMock(return_value=True)
     hub.read_holding_registers = AsyncMock()
 
+    # Mock _client for timeout setting
+    hub._client = MagicMock()
+    hub._client.comm_params = MagicMock()
+    hub._client.comm_params.timeout = 3.0
+
     # Mock behavior: Device 1 responds, Device 2 fails/timeout
     # Device 1
     mock_res_1 = MagicMock()
