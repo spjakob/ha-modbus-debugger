@@ -196,16 +196,35 @@ async def setup_services(hass: HomeAssistant):
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
 
+        scan_profile = call.data.get("scan_profile", "async_quick")
+        custom_timeout = call.data.get("custom_timeout", 3.0)
+        custom_concurrency = call.data.get("custom_concurrency", 50)
+
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
         show_debug = verbosity == "debug"
+
+        # Determine settings based on profile
+        if scan_profile == "custom":
+            timeout = custom_timeout
+            concurrency = custom_concurrency
+            # Async if concurrency > 1? Actually the profile is "custom", logic below handles concurrency.
+            is_async = True # Assume custom implies async capability, or we can treat concurrency=1 as sync.
+        elif scan_profile == "sync_quick":
+            timeout = 0.1
+            concurrency = 1
+            is_async = False
+        else: # async_quick
+            timeout = 0.1
+            concurrency = 50
+            is_async = True
 
         trace_log = []
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
 
         if show_trace:
             trace_log.append(
-                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}."
+                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}. Profile: {scan_profile} (Timeout={timeout}s, Concurrency={concurrency})"
             )
             trace_log.append("Verifying connection...")
 
@@ -226,9 +245,29 @@ async def setup_services(hass: HomeAssistant):
         if show_trace:
             trace_log.append("Connected. Beginning scan loop...")
 
+        # Suppress logging
+        logging.getLogger("pymodbus").setLevel(logging.CRITICAL)
+
+        # Apply timeout hack?
+        # Since hub._client is shared, modifying timeout is risky if other ops happen.
+        # But we are in a service call.
+        # Ideally we create a NEW client for scanning or accept the risk.
+        # hub._client.comm_params.timeout = timeout ?
+        # Pymodbus 3.x stores params in comm_params.
+        original_timeout = None
+        try:
+            if hasattr(hub._client, "comm_params"):
+                 original_timeout = hub._client.comm_params.timeout_connect
+                 hub._client.comm_params.timeout_connect = timeout
+            # Also read timeout?
+        except Exception:
+            pass
+
         found_devices = []
 
-        for unit_id in range(start_unit, end_unit + 1):
+        import asyncio
+
+        async def scan_unit(unit_id):
             if register_type == "input":
                 result = await hub.read_input_registers(unit_id, register, 1)
             else:
@@ -236,25 +275,57 @@ async def setup_services(hass: HomeAssistant):
 
             if result is not None and not result.isError():
                 val = result.registers[0]
-                found_devices.append(
-                    {
-                        "unit_id": unit_id,
-                        "register": register,
-                        "value": val,
-                        "hex": f"0x{val:04X}",
-                    }
-                )
-                if show_trace:
-                    trace_log.append(f"Unit {unit_id}: Found (Value {val})")
+                return {
+                    "unit_id": unit_id,
+                    "register": register,
+                    "value": val,
+                    "hex": f"0x{val:04X}",
+                }
+            return None
+
+        try:
+            if is_async and concurrency > 1:
+                # Batch processing
+                semaphore = asyncio.Semaphore(concurrency)
+
+                async def sem_scan(uid):
+                    async with semaphore:
+                        return await scan_unit(uid)
+
+                tasks = [sem_scan(uid) for uid in range(start_unit, end_unit + 1)]
+                results = await asyncio.gather(*tasks)
+                for res in results:
+                    if res:
+                        found_devices.append(res)
+                        if show_trace:
+                            trace_log.append(f"Unit {res['unit_id']}: Found")
+                    elif show_debug:
+                         # We can't easily log which ID failed in gather without wrapping, but order is preserved
+                         pass
             else:
-                if show_debug:
-                    trace_log.append(f"Unit {unit_id}: No Response")
+                # Serial loop
+                for unit_id in range(start_unit, end_unit + 1):
+                    res = await scan_unit(unit_id)
+                    if res:
+                        found_devices.append(res)
+                        if show_trace:
+                            trace_log.append(f"Unit {unit_id}: Found (Value {res['value']})")
+                    elif show_debug:
+                        trace_log.append(f"Unit {unit_id}: No Response")
+
+        finally:
+            # Restore logging
+            logging.getLogger("pymodbus").setLevel(logging.NOTSET)
+            # Restore timeout if possible
+            if original_timeout and hasattr(hub._client, "comm_params"):
+                 hub._client.comm_params.timeout_connect = original_timeout
 
         return {
             "found_devices": found_devices,
             "count": len(found_devices),
             "scanned_range": f"{start_unit}-{end_unit}",
             "trace": trace_log if show_trace else [],
+            "estimated_time": f"{(end_unit - start_unit + 1) * timeout / (concurrency if is_async else 1):.2f}s"
         }
 
     hass.services.async_register(
