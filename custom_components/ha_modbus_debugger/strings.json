@@ -1,0 +1,90 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add Modbus Debugger",
+        "description": "Choose the connection type for your Modbus network.",
+        "data": {
+          "name": "Hub Name",
+          "connection_type": "Type of connection"
+        }
+      },
+      "tcp": {
+        "title": "Configure TCP Connection",
+        "description": "Enter the IP address and port of your Modbus TCP Gateway or Device.",
+        "data": {
+          "host": "Host IP Address",
+          "port": "Port",
+          "rtu_over_tcp": "Use RTU over TCP (Check this if connecting to a Serial-Ethernet converter)",
+          "timeout": "Timeout (seconds)"
+        }
+      },
+      "serial": {
+        "title": "Configure Serial Connection",
+        "description": "Enter the serial port details for your Modbus RTU adapter.",
+        "data": {
+          "port": "Serial Port (e.g., /dev/ttyUSB0)",
+          "baudrate": "Baudrate",
+          "bytesize": "Byte Size",
+          "parity": "Parity",
+          "stopbits": "Stop Bits",
+          "serial_mode": "Serial Mode (ByteSize/Parity/StopBits)",
+          "timeout": "Timeout (seconds)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "menu": {
+        "title": "Modbus Debugger Options",
+        "description": "Manage sensors and connection settings.",
+        "menu_options": {
+          "add_sensor": "Add a new Sensor",
+          "remove_sensor": "Manage/Remove Sensors",
+          "list_sensors": "List Configured Sensors",
+          "edit_connection": "Edit Connection Settings"
+        }
+      },
+      "add_sensor": {
+        "title": "Add Sensor",
+        "description": "Create a persistent sensor for a register you have verified.",
+        "data": {
+          "name": "Sensor Name",
+          "unit_id": "Unit ID",
+          "register": "Register Address",
+          "count": "Register Count",
+          "data_type": "Data Type",
+          "scan_interval": "Update Interval (seconds)"
+        }
+      },
+      "remove_sensor": {
+        "title": "Manage Sensors",
+        "description": "Select the sensors you want to delete. If you don't want to delete any, just click Submit.",
+        "data": {
+          "sensors": "Sensors to Remove"
+        }
+      },
+      "list_sensors": {
+        "title": "Configured Sensors",
+        "description": "Here is a list of your configured sensors:\n\n{sensor_list}"
+      },
+      "edit_connection": {
+        "title": "Edit Connection",
+        "description": "Update connection settings (requires reload).",
+        "data": {
+          "host": "Host IP Address",
+          "port": "Port",
+          "timeout": "Timeout"
+        }
+      }
+    }
+  }
+}
