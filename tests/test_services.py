@@ -169,7 +169,7 @@ async def test_scan_devices_custom_profile_and_logging():
         "register": 0,
         "register_type": "holding",
         # Custom profile
-        "scan_profile": "custom",
+        "scan_profile": "custom_async",
         "custom_timeout": 0.5,
         "custom_retries": 1,
         "custom_concurrency": 5,
@@ -218,7 +218,7 @@ async def test_scan_devices_custom_profile_and_logging():
         args = start_call[0][1:] # skip format string
         assert args[0] == 1
         assert args[1] == 2
-        assert args[2] == "custom"
+        assert args[2] == "custom_async"
         assert abs(args[3] - 0.4) < 0.001
 
         # 2. Debug logs ("Sending request", "Received response")
