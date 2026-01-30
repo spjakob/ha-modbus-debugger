@@ -73,13 +73,5 @@ sys.modules["homeassistant.components.sensor"].SensorStateClass = MagicMock()
 
 sys.modules["homeassistant.data_entry_flow"] = MagicMock()
 
-# Mock Pymodbus for dev/test without dependencies
-mock_pymodbus = MagicMock()
-sys.modules["pymodbus"] = mock_pymodbus
-
-# Mock submodules to satisfy imports
-sys.modules["pymodbus.client"] = MagicMock()
-sys.modules["pymodbus.exceptions"] = MagicMock()
-sys.modules["pymodbus.pdu"] = MagicMock()
-sys.modules["pymodbus.framer"] = MagicMock()
-sys.modules["pymodbus.transaction"] = MagicMock()
+# Pymodbus is now installed in the environment, so we do NOT mock it here.
+# This allows tests to interact with the real library classes (though we may still mock the network calls).
