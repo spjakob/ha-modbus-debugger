@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from custom_components.ha_modbus_debugger.services import setup_services, SERVICE_READ_REGISTER, SERVICE_SCAN_DEVICES
 from custom_components.ha_modbus_debugger.const import DOMAIN
 from custom_components.ha_modbus_debugger.modbus import ModbusHub
-
+from homeassistant.core import SupportsResponse
 
 @pytest.mark.asyncio
 async def test_read_register_service():
