@@ -10,20 +10,7 @@ from pymodbus.client import (
 )
 from pymodbus.exceptions import ModbusException
 from pymodbus.pdu import ExceptionResponse, ModbusPDU
-
-try:
-    from pymodbus.framer import FramerType
-    HAS_FRAMER_TYPE = True
-except ImportError:
-    HAS_FRAMER_TYPE = False
-
-try:
-    from pymodbus.transaction import ModbusRtuFramer, ModbusSocketFramer
-except ImportError:
-    try:
-        from pymodbus.framer import ModbusRtuFramer, ModbusSocketFramer
-    except ImportError:
-        from pymodbus.framer import FramerRTU as ModbusRtuFramer, FramerSocket as ModbusSocketFramer
+from pymodbus.framer import FramerType
 
 from .const import (
     CONF_CONNECTION_TYPE,
@@ -75,17 +62,9 @@ class ModbusHub:
                 return True
 
         if self._connection_type == CONNECTION_TYPE_TCP:
-            framer = None
-            if HAS_FRAMER_TYPE:
-                # pymodbus >= 3.8.0
-                framer = FramerType.SOCKET
-                if self._config.get(CONF_RTU_OVER_TCP, False):
-                    framer = FramerType.RTU
-            else:
-                # Older pymodbus
-                framer = ModbusSocketFramer
-                if self._config.get(CONF_RTU_OVER_TCP, False):
-                    framer = ModbusRtuFramer
+            framer = FramerType.SOCKET
+            if self._config.get(CONF_RTU_OVER_TCP, False):
+                framer = FramerType.RTU
 
             self._client = AsyncModbusTcpClient(
                 self._config[CONF_HOST],
@@ -136,14 +115,9 @@ class ModbusHub:
 
         async with self._lock:
             try:
-                try:
-                    result = await self._client.read_holding_registers(
-                        address, count=count, slave=slave, **kwargs
-                    )
-                except TypeError:
-                    result = await self._client.read_holding_registers(
-                        address, count=count, device_id=slave, **kwargs
-                    )
+                result = await self._client.read_holding_registers(
+                    address, count=count, device_id=slave, **kwargs
+                )
             except ModbusException as exc:
                 _LOGGER.error("Pymodbus: Error reading holding registers: %s", exc)
                 return None
@@ -159,14 +133,9 @@ class ModbusHub:
 
         async with self._lock:
             try:
-                try:
-                    result = await self._client.read_input_registers(
-                        address, count=count, slave=slave, **kwargs
-                    )
-                except TypeError:
-                    result = await self._client.read_input_registers(
-                        address, count=count, device_id=slave, **kwargs
-                    )
+                result = await self._client.read_input_registers(
+                    address, count=count, device_id=slave, **kwargs
+                )
             except ModbusException as exc:
                 _LOGGER.error("Pymodbus: Error reading input registers: %s", exc)
                 return None

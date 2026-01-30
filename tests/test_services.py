@@ -93,10 +93,16 @@ async def async_test_scan_devices_service():
     hub.connect = AsyncMock(return_value=True)
     hub.read_holding_registers = AsyncMock()
 
-    # Mock _client for timeout setting and internal retries
+    # Mock _client for timeout setting and internal retries (Pymodbus v3 structure)
     hub._client = MagicMock()
-    hub._client.timeout = 3.0
-    hub._client.retries = 3
+    # Explicitly mock comm_params and ctx
+    hub._client.comm_params = MagicMock()
+    hub._client.comm_params.timeout_connect = 3.0
+    
+    hub._client.ctx = MagicMock()
+    hub._client.ctx.comm_params = MagicMock()
+    hub._client.ctx.comm_params.timeout_connect = 3.0
+    hub._client.ctx.retries = 3
 
     # Mock behavior: Device 1 responds, Device 2 fails/timeout
     # Device 1
@@ -163,10 +169,15 @@ async def async_test_scan_devices_custom_profile_and_logging():
     hub.connect = AsyncMock(return_value=True)
     hub.read_holding_registers = AsyncMock()
 
-    # Mock _client for timeout setting and internal retries
+    # Mock _client for timeout setting and internal retries (Pymodbus v3 structure)
     hub._client = MagicMock()
-    hub._client.timeout = 5.0 # Initial timeout
-    hub._client.retries = 3
+    hub._client.comm_params = MagicMock()
+    hub._client.comm_params.timeout_connect = 5.0
+    
+    hub._client.ctx = MagicMock()
+    hub._client.ctx.comm_params = MagicMock()
+    hub._client.ctx.comm_params.timeout_connect = 5.0
+    hub._client.ctx.retries = 3
 
     hass.data[DOMAIN]["hub_id"] = hub
 
@@ -201,8 +212,9 @@ async def async_test_scan_devices_custom_profile_and_logging():
         response = await handler(call)
 
         # Check that timeout and retries were restored after the call
-        assert hub._client.timeout == 5.0
-        assert hub._client.retries == 3
+        assert hub._client.comm_params.timeout_connect == 5.0
+        assert hub._client.ctx.comm_params.timeout_connect == 5.0
+        assert hub._client.ctx.retries == 3
 
         # Verify logger calls
         # Find the call to info that contains "Starting Modbus Scan"
@@ -234,6 +246,11 @@ async def async_test_scan_devices_custom_profile_and_logging():
                 complete_call = call_args
                 break
         assert complete_call is not None
+        # Check that we have 2 formatting arguments now
+        assert len(complete_call[0]) == 3 # msg + count + duration
+
+        assert "scan_duration" in response
+        assert response["scan_duration"] >= 0
 
 def test_scan_devices_custom_profile_and_logging():
     loop = asyncio.new_event_loop()

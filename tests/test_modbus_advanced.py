@@ -103,40 +103,6 @@ async def test_read_input_registers():
     result = await hub.read_input_registers(slave=1, address=10, count=1)
 
     assert result == mock_res
-    hub._client.read_input_registers.assert_called_with(10, count=1, slave=1)
+    # Pymodbus v3+ uses 'device_id' instead of 'slave'
+    hub._client.read_input_registers.assert_called_with(10, count=1, device_id=1)
 
-@pytest.mark.asyncio
-async def test_pymodbus_version_keyword_handling():
-    """Test compatibility with different keyword args (slave vs device_id)."""
-    config = {
-        CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
-        CONF_HOST: "127.0.0.1",
-        CONF_PORT: 502,
-    }
-    hub = ModbusHub(config)
-    hub._client = MagicMock(spec=AsyncModbusTcpClient)
-    hub._client.connected = True
-
-    # Case 1: Client accepts 'slave' (Older v3 or specific versions)
-    hub._client.read_holding_registers = AsyncMock()
-
-    await hub.read_holding_registers(slave=1, address=10, count=1)
-    hub._client.read_holding_registers.assert_called_with(10, count=1, slave=1)
-
-    # Case 2: Client raises TypeError for 'slave' and needs 'device_id' (Newer v3)
-    hub._client.read_holding_registers.reset_mock()
-
-    async def side_effect(*args, **kwargs):
-        if 'slave' in kwargs:
-            raise TypeError("unexpected keyword argument 'slave'")
-        return MagicMock()
-
-    hub._client.read_holding_registers.side_effect = side_effect
-
-    await hub.read_holding_registers(slave=1, address=10, count=1)
-
-    # We expect it to have been called twice: once with slave (failed), once with device_id
-    assert hub._client.read_holding_registers.call_count == 2
-    call_args = hub._client.read_holding_registers.call_args_list
-    assert 'slave' in call_args[0].kwargs
-    assert 'device_id' in call_args[1].kwargs

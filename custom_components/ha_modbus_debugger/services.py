@@ -3,6 +3,7 @@
 import logging
 import struct
 import asyncio
+import time
 
 from homeassistant.core import (
     HomeAssistant,
@@ -256,15 +257,19 @@ async def setup_services(hass: HomeAssistant):
         if show_trace:
             trace_log.append("Connected. Beginning scan loop...")
 
-        # Temporarily adjust client settings for scan
-        original_timeout = hub._client.timeout
-        original_retries = 3  # Default in pymodbus
-        if hasattr(hub._client, "retries"):
-            original_retries = hub._client.retries
-            
-        hub._client.timeout = timeout
-        if hasattr(hub._client, "retries"):
-            hub._client.retries = retries
+        # Temporarily adjust client settings for scan (Pymodbus v3+)
+        # We must update both client.comm_params and ctx.comm_params as they are separate instances.
+        
+        # 1. Timeout (timeout_connect)
+        orig_client_timeout = hub._client.comm_params.timeout_connect
+        orig_ctx_timeout = hub._client.ctx.comm_params.timeout_connect
+        
+        hub._client.comm_params.timeout_connect = timeout
+        hub._client.ctx.comm_params.timeout_connect = timeout
+        
+        # 2. Retries
+        orig_ctx_retries = hub._client.ctx.retries
+        hub._client.ctx.retries = retries
 
         # Log to file setup
         original_logger_level = _LOGGER.level
@@ -294,6 +299,8 @@ async def setup_services(hass: HomeAssistant):
 
         found_devices = []
         semaphore = asyncio.Semaphore(concurrency)
+
+        scan_start_time = time.perf_counter()
 
         async def scan_unit(unit_id):
             async with semaphore:
@@ -337,22 +344,25 @@ async def setup_services(hass: HomeAssistant):
             for t in tasks:
                 await t
 
+        scan_duration = time.perf_counter() - scan_start_time
+
         # Restore logging and client settings
         if disable_pymodbus_logging:
             pymodbus_logger.setLevel(original_level)
-            
-        hub._client.timeout = original_timeout
-        if hasattr(hub._client, "retries"):
-            hub._client.retries = original_retries
+
+        hub._client.comm_params.timeout_connect = orig_client_timeout
+        hub._client.ctx.comm_params.timeout_connect = orig_ctx_timeout
+        hub._client.ctx.retries = orig_ctx_retries
 
         if log_to_file:
-            _LOGGER.info("Modbus Scan Complete. Found %s devices.", len(found_devices))
+            _LOGGER.info("Modbus Scan Complete. Found %s devices. Duration: %.2fs", len(found_devices), scan_duration)
             _LOGGER.setLevel(original_logger_level)
 
         return {
             "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),
             "count": len(found_devices),
             "scanned_range": f"{start_unit}-{end_unit}",
+            "scan_duration": scan_duration,
             "trace": trace_log if show_trace else [],
         }
 

@@ -80,28 +80,25 @@ async def test_comm_params_compatibility():
     assert hub._client is not None
 
     # Check for comm_params existence (pymodbus v3 standard)
-    if hasattr(hub._client, "comm_params"):
-        comm_params = hub._client.comm_params
+    assert hasattr(hub._client, "comm_params"), "comm_params missing on client (pymodbus v3+ required)"
+    
+    comm_params = hub._client.comm_params
 
-        # Verify we can find a timeout attribute (either 'timeout' or 'timeout_connect')
-        has_timeout = hasattr(comm_params, "timeout")
-        has_timeout_connect = hasattr(comm_params, "timeout_connect")
+    # Verify we can find a timeout attribute (either 'timeout' or 'timeout_connect')
+    has_timeout = hasattr(comm_params, "timeout")
+    has_timeout_connect = hasattr(comm_params, "timeout_connect")
 
-        assert has_timeout or has_timeout_connect, \
-            f"comm_params found but has neither 'timeout' nor 'timeout_connect'. Dir: {dir(comm_params)}"
+    assert has_timeout or has_timeout_connect, \
+        f"comm_params found but has neither 'timeout' nor 'timeout_connect'. Dir: {dir(comm_params)}"
 
-        # Verify we can write to it (simulate what scan_devices does)
-        try:
-            if has_timeout:
-                comm_params.timeout = 0.5
-                assert comm_params.timeout == 0.5
-            elif has_timeout_connect:
-                comm_params.timeout_connect = 0.5
-                assert comm_params.timeout_connect == 0.5
-        except Exception as e:
-            pytest.fail(f"Failed to modify timeout attribute on comm_params: {e}")
+    # Verify we can write to it (simulate what scan_devices does)
+    try:
+        if has_timeout:
+            comm_params.timeout = 0.5
+            assert comm_params.timeout == 0.5
+        elif has_timeout_connect:
+            comm_params.timeout_connect = 0.5
+            assert comm_params.timeout_connect == 0.5
+    except Exception as e:
+        pytest.fail(f"Failed to modify timeout attribute on comm_params: {e}")
 
-    else:
-        # This implies older pymodbus or different structure
-        # If we are strictly on v3.8+, this should exist.
-        pass
