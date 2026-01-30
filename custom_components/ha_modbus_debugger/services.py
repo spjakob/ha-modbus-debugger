@@ -282,23 +282,36 @@ async def setup_services(hass: HomeAssistant):
         if disable_pymodbus_logging:
             pymodbus_logger.setLevel(logging.CRITICAL)
 
-        # Adjust timeout on the client (Retries handled via kwargs)
+        # Adjust timeout on the client
+        # Retries are handled manually, so we force internal retries to 0 if possible
         old_timeout = None
-        old_retries = None
+        old_internal_retries = None
         comm_params = None
+        transaction_manager = None
 
         if hub._client:
-            # Handle different Pymodbus versions
+            # 1. Update Timeout in comm_params
             if hasattr(hub._client, "comm_params"):
                 comm_params = hub._client.comm_params
-
-                # Update Timeout
                 if hasattr(comm_params, "timeout"):
                     old_timeout = comm_params.timeout
                     comm_params.timeout = timeout
                 elif hasattr(comm_params, "timeout_connect"):
                     old_timeout = comm_params.timeout_connect
                     comm_params.timeout_connect = timeout
+
+            # 2. Update Internal Retries (to 0)
+            # Pymodbus v3 stores retries in .ctx (TransactionManager)
+            # We want 0 internal retries because we control retries in our loop
+            if hasattr(hub._client, "ctx"):
+                transaction_manager = hub._client.ctx
+                if hasattr(transaction_manager, "retries"):
+                    old_internal_retries = transaction_manager.retries
+                    transaction_manager.retries = 0
+            # Fallback for older versions or if it's directly on client
+            elif hasattr(hub._client, "retries"):
+                old_internal_retries = hub._client.retries
+                hub._client.retries = 0
 
         found_devices = []
         semaphore = asyncio.Semaphore(concurrency)
@@ -310,21 +323,19 @@ async def setup_services(hass: HomeAssistant):
                     if hasattr(hub._client, "state"):
                         hub._client.state.error_count = 0
 
-                # Retry logic - handled manually here because we want fast fail,
-                # but we also pass retries=0 to pymodbus to prevent internal retries.
-                # The manual loop here is only for our OWN control if we wanted to implement custom retry logic,
-                # but "retries=0" means 1 attempt. "retries=1" means 2 attempts.
-                # So we loop range(retries + 1).
-
+                # Retry logic - handled manually here.
+                # "retries=0" means 1 attempt total.
+                # We loop range(retries + 1).
                 for attempt in range(retries + 1):
                     if log_to_file and show_debug:
                         _LOGGER.debug("Sending request to Unit %s (Attempt %d/%d)", unit_id, attempt + 1, retries + 1)
 
-                    # Pass retries=0 to underlying call to ensure it fails fast per attempt
+                    # Do NOT pass retries=0 to read_holding_registers as it causes TypeError in v3.
+                    # We rely on having set internal retries to 0 above.
                     if register_type == "input":
-                        result = await hub.read_input_registers(unit_id, register, 1, retries=0)
+                        result = await hub.read_input_registers(unit_id, register, 1)
                     else:
-                        result = await hub.read_holding_registers(unit_id, register, 1, retries=0)
+                        result = await hub.read_holding_registers(unit_id, register, 1)
 
                     if log_to_file and show_debug:
                         _LOGGER.debug(
@@ -374,6 +385,12 @@ async def setup_services(hass: HomeAssistant):
                 comm_params.timeout = old_timeout
             elif hasattr(comm_params, "timeout_connect"):
                 comm_params.timeout_connect = old_timeout
+
+        if old_internal_retries is not None:
+            if transaction_manager and hasattr(transaction_manager, "retries"):
+                transaction_manager.retries = old_internal_retries
+            elif hasattr(hub._client, "retries"):
+                hub._client.retries = old_internal_retries
 
         return {
             "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),
