@@ -4,34 +4,6 @@ import types
 from unittest.mock import MagicMock
 import pytest
 
-# -- MOCK HOME ASSISTANT MODULES BEFORE IMPORTING INTEGRATION CODE --
-# This is necessary because we are running this test against the real installed library
-# but without a real Home Assistant environment.
-
-# Create fake homeassistant package structure
-ha = types.ModuleType("homeassistant")
-ha.__path__ = []
-sys.modules["homeassistant"] = ha
-
-ha_core = types.ModuleType("homeassistant.core")
-sys.modules["homeassistant.core"] = ha_core
-# Add required classes to homeassistant.core
-ha_core.HomeAssistant = MagicMock
-ha_core.ServiceCall = MagicMock
-ha_core.ServiceResponse = MagicMock
-ha_core.SupportsResponse = MagicMock
-
-ha_exceptions = types.ModuleType("homeassistant.exceptions")
-sys.modules["homeassistant.exceptions"] = ha_exceptions
-ha_exceptions.ServiceValidationError = Exception
-
-sys.modules["homeassistant.config_entries"] = MagicMock()
-sys.modules["homeassistant.const"] = MagicMock()
-sys.modules["homeassistant.helpers"] = MagicMock()
-sys.modules["homeassistant.helpers.typing"] = MagicMock()
-
-# -- END MOCKS --
-
 from custom_components.ha_modbus_debugger.modbus import ModbusHub
 from custom_components.ha_modbus_debugger.const import (
     CONF_CONNECTION_TYPE,
