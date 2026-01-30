@@ -201,6 +201,7 @@ async def setup_services(hass: HomeAssistant):
         custom_timeout = float(call.data.get("custom_timeout", 3.0))
         custom_retries = int(call.data.get("custom_retries", 3))
         custom_concurrency = int(call.data.get("custom_concurrency", 10))
+        log_to_file = call.data.get("log_to_file", False)
 
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
@@ -226,6 +227,10 @@ async def setup_services(hass: HomeAssistant):
             concurrency = custom_concurrency
             is_async = True
 
+        # Calculate estimate
+        num_units = end_unit - start_unit + 1
+        est_time = (num_units * timeout * (retries + 1)) / concurrency
+
         if show_trace:
             trace_log.append(
                 f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}. Profile: {scan_profile}"
@@ -248,6 +253,22 @@ async def setup_services(hass: HomeAssistant):
 
         if show_trace:
             trace_log.append("Connected. Beginning scan loop...")
+
+        # Log to file setup
+        original_logger_level = _LOGGER.level
+        if log_to_file:
+            if show_debug:
+                _LOGGER.setLevel(logging.DEBUG)
+            elif verbosity == "detailed":
+                _LOGGER.setLevel(logging.INFO)
+
+            _LOGGER.info(
+                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Estimated time: %.2fs. (Pymodbus logging suppressed)",
+                start_unit,
+                end_unit,
+                scan_profile,
+                est_time,
+            )
 
         # Suppress logging
         pymodbus_logger = logging.getLogger("pymodbus")
@@ -275,10 +296,19 @@ async def setup_services(hass: HomeAssistant):
             async with semaphore:
                 # Retry logic
                 for attempt in range(retries + 1):
+
+                    if log_to_file and show_debug:
+                        _LOGGER.debug("Sending request to Unit %s", unit_id)
+
                     if register_type == "input":
                         result = await hub.read_input_registers(unit_id, register, 1)
                     else:
                         result = await hub.read_holding_registers(unit_id, register, 1)
+
+                    if log_to_file and show_debug:
+                        _LOGGER.debug(
+                            "Received response from Unit %s: %s", unit_id, result
+                        )
 
                     if result is not None and not result.isError():
                         val = result.registers[0]
@@ -312,6 +342,10 @@ async def setup_services(hass: HomeAssistant):
 
         # Restore logging and timeout
         pymodbus_logger.setLevel(original_level)
+        if log_to_file:
+            _LOGGER.info("Modbus Scan Complete. Found %s devices.", len(found_devices))
+            _LOGGER.setLevel(original_logger_level)
+
         if old_timeout is not None and comm_params:
             if hasattr(comm_params, "timeout"):
                 comm_params.timeout = old_timeout
