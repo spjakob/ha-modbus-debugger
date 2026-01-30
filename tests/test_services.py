@@ -95,10 +95,8 @@ async def async_test_scan_devices_service():
 
     # Mock _client for timeout setting and internal retries
     hub._client = MagicMock()
-    hub._client.comm_params = MagicMock()
-    hub._client.comm_params.timeout = 3.0
-    hub._client.ctx = MagicMock()
-    hub._client.ctx.retries = 3
+    hub._client.timeout = 3.0
+    hub._client.retries = 3
 
     # Mock behavior: Device 1 responds, Device 2 fails/timeout
     # Device 1
@@ -167,10 +165,8 @@ async def async_test_scan_devices_custom_profile_and_logging():
 
     # Mock _client for timeout setting and internal retries
     hub._client = MagicMock()
-    hub._client.comm_params = MagicMock()
-    hub._client.comm_params.timeout = 5.0 # Initial timeout
-    hub._client.ctx = MagicMock()
-    hub._client.ctx.retries = 3
+    hub._client.timeout = 5.0 # Initial timeout
+    hub._client.retries = 3
 
     hass.data[DOMAIN]["hub_id"] = hub
 
@@ -195,13 +191,7 @@ async def async_test_scan_devices_custom_profile_and_logging():
     mock_res = MagicMock()
     mock_res.registers = [123]
     mock_res.isError.return_value = False
-
-    def side_effect(slave, address, count, **kwargs):
-        if "retries" in kwargs:
-             raise TypeError("read_holding_registers() got an unexpected keyword argument 'retries'")
-        return mock_res
-
-    hub.read_holding_registers.side_effect = side_effect
+    hub.read_holding_registers.return_value = mock_res
 
     # Patch the logger in services module
     with patch("custom_components.ha_modbus_debugger.services._LOGGER") as mock_logger:
@@ -210,8 +200,9 @@ async def async_test_scan_devices_custom_profile_and_logging():
 
         response = await handler(call)
 
-        # Check timeout was updated to custom value (0.5)
-        assert hub._client.comm_params.timeout == 5.0
+        # Check that timeout and retries were restored after the call
+        assert hub._client.timeout == 5.0
+        assert hub._client.retries == 3
 
         # Verify logger calls
         # Find the call to info that contains "Starting Modbus Scan"

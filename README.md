@@ -70,9 +70,52 @@ Once you have identified the correct register settings:
 4.  Enter the Name, Unit ID, Register, and Data Type.
 5.  The sensor will be created (e.g., `sensor.my_voltage`) and will update automatically.
 
-### 4. Monitoring Health
-For every device (Unit ID) you add sensors for, the integration automatically creates statistics sensors:
-*   `sensor.device_X_success_count`
-*   `sensor.device_X_fail_count`
+## Monitoring Health
 
-Use these to monitor the stability of your Modbus network.
+For every device (Unit ID) you add sensors for, a sensor is automatically created to show the last result of the communication with the device.
+
+
+
+---
+
+
+
+## Development
+
+
+
+To set up a local development environment for testing:
+
+
+
+1.  **Create and activate a virtual environment:**
+
+    ```bash
+
+    python3 -m venv .venv
+
+    source .venv/bin/activate
+
+    ```
+
+
+
+2.  **Install the test requirements:**
+
+    ```bash
+
+    pip install -r requirements_test.txt
+
+    ```
+
+
+
+3.  **Run the tests:**
+
+    ```bash
+
+    PYTHONPATH=. pytest
+
+    ```
+
+

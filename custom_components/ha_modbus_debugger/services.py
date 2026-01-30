@@ -256,6 +256,16 @@ async def setup_services(hass: HomeAssistant):
         if show_trace:
             trace_log.append("Connected. Beginning scan loop...")
 
+        # Temporarily adjust client settings for scan
+        original_timeout = hub._client.timeout
+        original_retries = 3  # Default in pymodbus
+        if hasattr(hub._client, "retries"):
+            original_retries = hub._client.retries
+            
+        hub._client.timeout = timeout
+        if hasattr(hub._client, "retries"):
+            hub._client.retries = retries
+
         # Log to file setup
         original_logger_level = _LOGGER.level
         if log_to_file:
@@ -282,84 +292,40 @@ async def setup_services(hass: HomeAssistant):
         if disable_pymodbus_logging:
             pymodbus_logger.setLevel(logging.CRITICAL)
 
-        # Adjust timeout on the client
-        # Retries are handled manually, so we force internal retries to 0 if possible
-        old_timeout = None
-        old_internal_retries = None
-        comm_params = None
-        transaction_manager = None
-
-        if hub._client:
-            # 1. Update Timeout in comm_params
-            if hasattr(hub._client, "comm_params"):
-                comm_params = hub._client.comm_params
-                if hasattr(comm_params, "timeout"):
-                    old_timeout = comm_params.timeout
-                    comm_params.timeout = timeout
-                elif hasattr(comm_params, "timeout_connect"):
-                    old_timeout = comm_params.timeout_connect
-                    comm_params.timeout_connect = timeout
-
-            # 2. Update Internal Retries (to 0)
-            # Pymodbus v3 stores retries in .ctx (TransactionManager)
-            # We want 0 internal retries because we control retries in our loop
-            if hasattr(hub._client, "ctx"):
-                transaction_manager = hub._client.ctx
-                if hasattr(transaction_manager, "retries"):
-                    old_internal_retries = transaction_manager.retries
-                    transaction_manager.retries = 0
-            # Fallback for older versions or if it's directly on client
-            elif hasattr(hub._client, "retries"):
-                old_internal_retries = hub._client.retries
-                hub._client.retries = 0
-
         found_devices = []
         semaphore = asyncio.Semaphore(concurrency)
 
         async def scan_unit(unit_id):
             async with semaphore:
-                # IMPORTANT: Reset error count to prevent auto-close logic in Pymodbus
-                if hub._client:
-                    if hasattr(hub._client, "state"):
-                        hub._client.state.error_count = 0
+                if log_to_file and show_debug:
+                    _LOGGER.debug("Sending request to Unit %s", unit_id)
 
-                # Retry logic - handled manually here.
-                # "retries=0" means 1 attempt total.
-                # We loop range(retries + 1).
-                for attempt in range(retries + 1):
-                    if log_to_file and show_debug:
-                        _LOGGER.debug("Sending request to Unit %s (Attempt %d/%d)", unit_id, attempt + 1, retries + 1)
+                if register_type == "input":
+                    result = await hub.read_input_registers(unit_id, register, 1)
+                else:
+                    result = await hub.read_holding_registers(unit_id, register, 1)
 
-                    # Do NOT pass retries=0 to read_holding_registers as it causes TypeError in v3.
-                    # We rely on having set internal retries to 0 above.
-                    if register_type == "input":
-                        result = await hub.read_input_registers(unit_id, register, 1)
-                    else:
-                        result = await hub.read_holding_registers(unit_id, register, 1)
+                if log_to_file and show_debug:
+                    _LOGGER.debug(
+                        "Received response from Unit %s: %s", unit_id, result
+                    )
 
-                    if log_to_file and show_debug:
-                        _LOGGER.debug(
-                            "Received response from Unit %s: %s", unit_id, result
-                        )
+                if result is not None and not result.isError():
+                    val = result.registers[0]
+                    found_devices.append(
+                        {
+                            "unit_id": unit_id,
+                            "register": register,
+                            "value": val,
+                            "hex": f"0x{val:04X}",
+                        }
+                    )
+                    if show_trace:
+                        trace_log.append(f"Unit {unit_id}: Found (Value {val})")
+                    return
 
-                    if result is not None and not result.isError():
-                        val = result.registers[0]
-                        found_devices.append(
-                            {
-                                "unit_id": unit_id,
-                                "register": register,
-                                "value": val,
-                                "hex": f"0x{val:04X}",
-                            }
-                        )
-                        if show_trace:
-                            trace_log.append(f"Unit {unit_id}: Found (Value {val})")
-                        return  # Success
-
-                    # If failed, we loop to retry.
-                    if attempt == retries:
-                        if show_debug:
-                            trace_log.append(f"Unit {unit_id}: No Response")
+                if show_debug:
+                    trace_log.append(f"Unit {unit_id}: No Response")
 
         tasks = []
         for unit_id in range(start_unit, end_unit + 1):
@@ -371,26 +337,17 @@ async def setup_services(hass: HomeAssistant):
             for t in tasks:
                 await t
 
-        # Restore logging and timeout
+        # Restore logging and client settings
         if disable_pymodbus_logging:
             pymodbus_logger.setLevel(original_level)
+            
+        hub._client.timeout = original_timeout
+        if hasattr(hub._client, "retries"):
+            hub._client.retries = original_retries
 
         if log_to_file:
             _LOGGER.info("Modbus Scan Complete. Found %s devices.", len(found_devices))
             _LOGGER.setLevel(original_logger_level)
-
-        # Restore Client Params
-        if comm_params and old_timeout is not None:
-            if hasattr(comm_params, "timeout"):
-                comm_params.timeout = old_timeout
-            elif hasattr(comm_params, "timeout_connect"):
-                comm_params.timeout_connect = old_timeout
-
-        if old_internal_retries is not None:
-            if transaction_manager and hasattr(transaction_manager, "retries"):
-                transaction_manager.retries = old_internal_retries
-            elif hasattr(hub._client, "retries"):
-                hub._client.retries = old_internal_retries
 
         return {
             "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),
