@@ -1,13 +1,13 @@
 import pytest
 import logging
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from custom_components.ha_modbus_debugger.services import setup_services, SERVICE_READ_REGISTER, SERVICE_SCAN_DEVICES
 from custom_components.ha_modbus_debugger.const import DOMAIN
 from custom_components.ha_modbus_debugger.modbus import ModbusHub
 from homeassistant.core import SupportsResponse
 
-@pytest.mark.asyncio
-async def test_read_register_service():
+async def async_test_read_register_service():
     hass = MagicMock()
     hass.data = {DOMAIN: {}}
     hass.services.async_register = MagicMock()
@@ -17,9 +17,6 @@ async def test_read_register_service():
     await setup_services(hass)
 
     # We now register TWO services. We need to find the read_register one.
-    # hass.services.async_register.call_args gives the LAST call, which might be scan_devices.
-    # We should iterate over call_args_list.
-
     handler = None
     for call in hass.services.async_register.call_args_list:
         args = call[0]
@@ -69,8 +66,12 @@ async def test_read_register_service():
     # LE Swap: 0x00020001 = 131073
     assert response["int32_le_swap"] == [131073]
 
-@pytest.mark.asyncio
-async def test_scan_devices_service():
+def test_read_register_service():
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(async_test_read_register_service())
+    loop.close()
+
+async def async_test_scan_devices_service():
     hass = MagicMock()
     hass.data = {DOMAIN: {}}
     hass.services.async_register = MagicMock()
@@ -131,8 +132,12 @@ async def test_scan_devices_service():
     assert response["found_devices"][0]["unit_id"] == 1
     assert response["found_devices"][0]["value"] == 123
 
-@pytest.mark.asyncio
-async def test_scan_devices_custom_profile_and_logging():
+def test_scan_devices_service():
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(async_test_scan_devices_service())
+    loop.close()
+
+async def async_test_scan_devices_custom_profile_and_logging():
     hass = MagicMock()
     hass.data = {DOMAIN: {}}
     hass.services.async_register = MagicMock()
@@ -169,7 +174,7 @@ async def test_scan_devices_custom_profile_and_logging():
         "register": 0,
         "register_type": "holding",
         # Custom profile
-        "scan_profile": "custom",
+        "scan_profile": "custom_async",
         "custom_timeout": 0.5,
         "custom_retries": 1,
         "custom_concurrency": 5,
@@ -192,20 +197,9 @@ async def test_scan_devices_custom_profile_and_logging():
         response = await handler(call)
 
         # Check timeout was updated to custom value (0.5)
-        # Note: The code sets comm_params.timeout temporarily then restores it.
-        # But during the execution it should have been set.
-        # Since we can't inspect "during", we rely on the fact that if it wasn't restored,
-        # it would be stuck at 0.5. Or we check that the logic *attempted* to set it.
-        # Actually, since it's an async function and we aren't pausing,
-        # we can check that `comm_params.timeout` ends up back at 5.0 (restored).
         assert hub._client.comm_params.timeout == 5.0
 
         # Verify logger calls
-        # 1. Start message with estimate
-        # Estimate: (2 units * 0.5 timeout * (1+1 retries)) / 5 concurrency = (2 * 0.5 * 2) / 5 = 2.0 / 5 = 0.4 seconds
-        # Wait, start=1, end=2 -> 2 units.
-        # Est = (2 * 0.5 * 2) / 5 = 0.4s.
-
         # Find the call to info that contains "Starting Modbus Scan"
         start_call = None
         for call_args in mock_logger.info.call_args_list:
@@ -214,12 +208,15 @@ async def test_scan_devices_custom_profile_and_logging():
                 break
 
         assert start_call is not None
-        # Check arguments: start_unit, end_unit, profile, est_time
-        args = start_call[0][1:] # skip format string
+        # Check arguments: start_unit, end_unit, profile, timeout, retries, concurrency, est_time
+        args = start_call[0][1:]
         assert args[0] == 1
         assert args[1] == 2
-        assert args[2] == "custom"
-        assert abs(args[3] - 0.4) < 0.001
+        assert args[2] == "custom_async"
+        assert abs(args[3] - 0.5) < 0.001 # Timeout
+        assert args[4] == 1 # Retries
+        assert args[5] == 5 # Concurrency
+        assert abs(args[6] - 0.4) < 0.001 # Est Time
 
         # 2. Debug logs ("Sending request", "Received response")
         # Since we mocked log_to_file=True and verbosity=debug
@@ -232,3 +229,8 @@ async def test_scan_devices_custom_profile_and_logging():
                 complete_call = call_args
                 break
         assert complete_call is not None
+
+def test_scan_devices_custom_profile_and_logging():
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(async_test_scan_devices_custom_profile_and_logging())
+    loop.close()

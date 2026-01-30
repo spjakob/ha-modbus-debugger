@@ -128,7 +128,7 @@ class ModbusHub:
             self._client.close()
 
     async def read_holding_registers(
-        self, slave: int, address: int, count: int
+        self, slave: int, address: int, count: int, **kwargs
     ) -> Union[ModbusPDU, ExceptionResponse, None]:
         """Read holding registers."""
         if not self._client or not self._client.connected:
@@ -138,11 +138,11 @@ class ModbusHub:
             try:
                 try:
                     result = await self._client.read_holding_registers(
-                        address, count=count, slave=slave
+                        address, count=count, slave=slave, **kwargs
                     )
                 except TypeError:
                     result = await self._client.read_holding_registers(
-                        address, count=count, device_id=slave
+                        address, count=count, device_id=slave, **kwargs
                     )
             except ModbusException as exc:
                 _LOGGER.error("Pymodbus: Error reading holding registers: %s", exc)
@@ -151,7 +151,7 @@ class ModbusHub:
             return result
 
     async def read_input_registers(
-        self, slave: int, address: int, count: int
+        self, slave: int, address: int, count: int, **kwargs
     ) -> Union[ModbusPDU, ExceptionResponse, None]:
         """Read input registers."""
         if not self._client or not self._client.connected:
@@ -161,11 +161,11 @@ class ModbusHub:
             try:
                 try:
                     result = await self._client.read_input_registers(
-                        address, count=count, slave=slave
+                        address, count=count, slave=slave, **kwargs
                     )
                 except TypeError:
                     result = await self._client.read_input_registers(
-                        address, count=count, device_id=slave
+                        address, count=count, device_id=slave, **kwargs
                     )
             except ModbusException as exc:
                 _LOGGER.error("Pymodbus: Error reading input registers: %s", exc)

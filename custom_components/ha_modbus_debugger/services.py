@@ -202,6 +202,8 @@ async def setup_services(hass: HomeAssistant):
         custom_retries = int(call.data.get("custom_retries", 3))
         custom_concurrency = int(call.data.get("custom_concurrency", 10))
         log_to_file = call.data.get("log_to_file", False)
+        # Default True for suppression
+        disable_pymodbus_logging = call.data.get("disable_pymodbus_logging", True)
 
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
@@ -221,11 +223,11 @@ async def setup_services(hass: HomeAssistant):
             retries = 0
             concurrency = 1
             is_async = False
-        elif scan_profile == "custom":
+        elif scan_profile in ["custom_async", "custom_sync"]:
             timeout = custom_timeout
             retries = custom_retries
             concurrency = custom_concurrency
-            is_async = True
+            is_async = (scan_profile == "custom_async")
 
         # Calculate estimate
         num_units = end_unit - start_unit + 1
@@ -263,47 +265,65 @@ async def setup_services(hass: HomeAssistant):
                 _LOGGER.setLevel(logging.INFO)
 
             _LOGGER.info(
-                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Estimated time: %.2fs. (Pymodbus logging suppressed)",
+                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d. Estimated time: %.2fs. (Pymodbus logging: %s)",
                 start_unit,
                 end_unit,
                 scan_profile,
+                timeout,
+                retries,
+                concurrency,
                 est_time,
+                "Suppressed" if disable_pymodbus_logging else "Enabled"
             )
 
         # Suppress logging
         pymodbus_logger = logging.getLogger("pymodbus")
         original_level = pymodbus_logger.level
-        pymodbus_logger.setLevel(logging.CRITICAL)
+        if disable_pymodbus_logging:
+            pymodbus_logger.setLevel(logging.CRITICAL)
 
-        # Adjust timeout if possible
+        # Adjust timeout on the client (Retries handled via kwargs)
         old_timeout = None
         comm_params = None
 
-        if hub._client and hasattr(hub._client, "comm_params"):
-            comm_params = hub._client.comm_params
-            # Check for 'timeout' or 'timeout_connect'
-            if hasattr(comm_params, "timeout"):
-                old_timeout = comm_params.timeout
-                comm_params.timeout = timeout
-            elif hasattr(comm_params, "timeout_connect"):
-                old_timeout = comm_params.timeout_connect
-                comm_params.timeout_connect = timeout
+        if hub._client:
+            # Handle different Pymodbus versions
+            if hasattr(hub._client, "comm_params"):
+                comm_params = hub._client.comm_params
+
+                # Update Timeout
+                if hasattr(comm_params, "timeout"):
+                    old_timeout = comm_params.timeout
+                    comm_params.timeout = timeout
+                elif hasattr(comm_params, "timeout_connect"):
+                    old_timeout = comm_params.timeout_connect
+                    comm_params.timeout_connect = timeout
 
         found_devices = []
         semaphore = asyncio.Semaphore(concurrency)
 
         async def scan_unit(unit_id):
             async with semaphore:
-                # Retry logic
+                # IMPORTANT: Reset error count to prevent auto-close logic in Pymodbus
+                if hub._client:
+                    if hasattr(hub._client, "state"):
+                        hub._client.state.error_count = 0
+
+                # Retry logic - handled manually here because we want fast fail,
+                # but we also pass retries=0 to pymodbus to prevent internal retries.
+                # The manual loop here is only for our OWN control if we wanted to implement custom retry logic,
+                # but "retries=0" means 1 attempt. "retries=1" means 2 attempts.
+                # So we loop range(retries + 1).
+
                 for attempt in range(retries + 1):
-
                     if log_to_file and show_debug:
-                        _LOGGER.debug("Sending request to Unit %s", unit_id)
+                        _LOGGER.debug("Sending request to Unit %s (Attempt %d/%d)", unit_id, attempt + 1, retries + 1)
 
+                    # Pass retries=0 to underlying call to ensure it fails fast per attempt
                     if register_type == "input":
-                        result = await hub.read_input_registers(unit_id, register, 1)
+                        result = await hub.read_input_registers(unit_id, register, 1, retries=0)
                     else:
-                        result = await hub.read_holding_registers(unit_id, register, 1)
+                        result = await hub.read_holding_registers(unit_id, register, 1, retries=0)
 
                     if log_to_file and show_debug:
                         _LOGGER.debug(
@@ -325,7 +345,6 @@ async def setup_services(hass: HomeAssistant):
                         return  # Success
 
                     # If failed, we loop to retry.
-                    # If it was the last attempt, log failure if debug.
                     if attempt == retries:
                         if show_debug:
                             trace_log.append(f"Unit {unit_id}: No Response")
@@ -341,12 +360,15 @@ async def setup_services(hass: HomeAssistant):
                 await t
 
         # Restore logging and timeout
-        pymodbus_logger.setLevel(original_level)
+        if disable_pymodbus_logging:
+            pymodbus_logger.setLevel(original_level)
+
         if log_to_file:
             _LOGGER.info("Modbus Scan Complete. Found %s devices.", len(found_devices))
             _LOGGER.setLevel(original_logger_level)
 
-        if old_timeout is not None and comm_params:
+        # Restore Client Params
+        if comm_params and old_timeout is not None:
             if hasattr(comm_params, "timeout"):
                 comm_params.timeout = old_timeout
             elif hasattr(comm_params, "timeout_connect"):

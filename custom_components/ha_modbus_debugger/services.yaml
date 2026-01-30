@@ -5,7 +5,7 @@ read_register:
     hub_id:
       name: Hub ID
       description: The Modbus Hub to use.
-      required: true
+      required: false
       selector:
         config_entry:
           integration: ha_modbus_debugger
@@ -72,7 +72,7 @@ scan_devices:
     hub_id:
       name: Hub ID
       description: The Modbus Hub to use.
-      required: true
+      required: false
       selector:
         config_entry:
           integration: ha_modbus_debugger
@@ -130,10 +130,12 @@ scan_devices:
               value: async_quick
             - label: Quick Scan (Sync) - 0.1s, 0 retries
               value: sync_quick
-            - label: Custom
-              value: custom
+            - label: Custom Scan (Async)
+              value: custom_async
+            - label: Custom Scan (Sync)
+              value: custom_sync
     custom_timeout:
-      name: Custom Timeout
+      name: Custom Timeout (Custom Profile Only)
       description: Timeout in seconds (only for Custom profile).
       required: false
       default: 3.0
@@ -144,7 +146,7 @@ scan_devices:
           step: 0.1
           mode: box
     custom_retries:
-      name: Custom Retries
+      name: Custom Retries (Custom Profile Only)
       description: Number of retries (only for Custom profile).
       required: false
       default: 3
@@ -154,7 +156,7 @@ scan_devices:
           max: 10
           mode: box
     custom_concurrency:
-      name: Custom Concurrency
+      name: Custom Concurrency (Custom Profile Only)
       description: Max concurrent requests (only for Custom profile).
       required: false
       default: 10
@@ -178,9 +180,16 @@ scan_devices:
             - label: Debug (Log Every Device)
               value: debug
     log_to_file:
-      name: Log to File
+      name: Log Scan Progress to File
       description: If enabled, logs scan progress and debug info to the Home Assistant log file.
       required: false
       default: false
       selector:
-        boolean:
+        boolean: {}
+    disable_pymodbus_logging:
+      name: Suppress Pymodbus Error Logs
+      description: If enabled, suppresses detailed Pymodbus error logs (keeping logs clean). Disable to debug connection issues.
+      required: false
+      default: true
+      selector:
+        boolean: {}
