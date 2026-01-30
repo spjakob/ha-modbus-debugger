@@ -256,9 +256,17 @@ async def setup_services(hass: HomeAssistant):
 
         # Adjust timeout if possible
         old_timeout = None
+        comm_params = None
+
         if hub._client and hasattr(hub._client, "comm_params"):
-            old_timeout = hub._client.comm_params.timeout
-            hub._client.comm_params.timeout = timeout
+            comm_params = hub._client.comm_params
+            # Check for 'timeout' or 'timeout_connect'
+            if hasattr(comm_params, "timeout"):
+                old_timeout = comm_params.timeout
+                comm_params.timeout = timeout
+            elif hasattr(comm_params, "timeout_connect"):
+                old_timeout = comm_params.timeout_connect
+                comm_params.timeout_connect = timeout
 
         found_devices = []
         semaphore = asyncio.Semaphore(concurrency)
@@ -304,8 +312,11 @@ async def setup_services(hass: HomeAssistant):
 
         # Restore logging and timeout
         pymodbus_logger.setLevel(original_level)
-        if old_timeout is not None:
-            hub._client.comm_params.timeout = old_timeout
+        if old_timeout is not None and comm_params:
+            if hasattr(comm_params, "timeout"):
+                comm_params.timeout = old_timeout
+            elif hasattr(comm_params, "timeout_connect"):
+                comm_params.timeout_connect = old_timeout
 
         return {
             "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),

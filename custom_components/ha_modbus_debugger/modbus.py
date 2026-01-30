@@ -12,6 +12,12 @@ from pymodbus.exceptions import ModbusException
 from pymodbus.pdu import ExceptionResponse, ModbusPDU
 
 try:
+    from pymodbus.framer import FramerType
+    HAS_FRAMER_TYPE = True
+except ImportError:
+    HAS_FRAMER_TYPE = False
+
+try:
     from pymodbus.transaction import ModbusRtuFramer, ModbusSocketFramer
 except ImportError:
     try:
@@ -69,9 +75,17 @@ class ModbusHub:
                 return True
 
         if self._connection_type == CONNECTION_TYPE_TCP:
-            framer = ModbusSocketFramer
-            if self._config.get(CONF_RTU_OVER_TCP, False):
-                framer = ModbusRtuFramer
+            framer = None
+            if HAS_FRAMER_TYPE:
+                # pymodbus >= 3.8.0
+                framer = FramerType.SOCKET
+                if self._config.get(CONF_RTU_OVER_TCP, False):
+                    framer = FramerType.RTU
+            else:
+                # Older pymodbus
+                framer = ModbusSocketFramer
+                if self._config.get(CONF_RTU_OVER_TCP, False):
+                    framer = ModbusRtuFramer
 
             self._client = AsyncModbusTcpClient(
                 self._config[CONF_HOST],
