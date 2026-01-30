@@ -5,7 +5,7 @@ read_register:
     hub_id:
       name: Hub ID
       description: The Modbus Hub to use.
-      required: false
+      required: true
       selector:
         config_entry:
           integration: ha_modbus_debugger
@@ -72,7 +72,7 @@ scan_devices:
     hub_id:
       name: Hub ID
       description: The Modbus Hub to use.
-      required: false
+      required: true
       selector:
         config_entry:
           integration: ha_modbus_debugger
@@ -182,14 +182,14 @@ scan_devices:
     log_to_file:
       name: Log Scan Progress to File
       description: If enabled, logs scan progress and debug info to the Home Assistant log file.
-      required: false
+      required: true
       default: false
       selector:
         boolean: {}
     disable_pymodbus_logging:
       name: Suppress Pymodbus Error Logs
       description: If enabled, suppresses detailed Pymodbus error logs (keeping logs clean). Disable to debug connection issues.
-      required: false
+      required: true
       default: true
       selector:
         boolean: {}

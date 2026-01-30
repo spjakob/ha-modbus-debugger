@@ -93,10 +93,12 @@ async def async_test_scan_devices_service():
     hub.connect = AsyncMock(return_value=True)
     hub.read_holding_registers = AsyncMock()
 
-    # Mock _client for timeout setting
+    # Mock _client for timeout setting and internal retries
     hub._client = MagicMock()
     hub._client.comm_params = MagicMock()
     hub._client.comm_params.timeout = 3.0
+    hub._client.ctx = MagicMock()
+    hub._client.ctx.retries = 3
 
     # Mock behavior: Device 1 responds, Device 2 fails/timeout
     # Device 1
@@ -109,6 +111,10 @@ async def async_test_scan_devices_service():
     mock_res_2.isError.return_value = True
 
     def side_effect(slave, address, count, **kwargs):
+        # STRICT CHECK: fail if retries is passed
+        if "retries" in kwargs:
+             raise TypeError("read_holding_registers() got an unexpected keyword argument 'retries'")
+
         if slave == 1:
             return mock_res_1
         return mock_res_2
@@ -159,10 +165,12 @@ async def async_test_scan_devices_custom_profile_and_logging():
     hub.connect = AsyncMock(return_value=True)
     hub.read_holding_registers = AsyncMock()
 
-    # Mock _client for timeout setting
+    # Mock _client for timeout setting and internal retries
     hub._client = MagicMock()
     hub._client.comm_params = MagicMock()
     hub._client.comm_params.timeout = 5.0 # Initial timeout
+    hub._client.ctx = MagicMock()
+    hub._client.ctx.retries = 3
 
     hass.data[DOMAIN]["hub_id"] = hub
 
@@ -187,7 +195,13 @@ async def async_test_scan_devices_custom_profile_and_logging():
     mock_res = MagicMock()
     mock_res.registers = [123]
     mock_res.isError.return_value = False
-    hub.read_holding_registers.return_value = mock_res
+
+    def side_effect(slave, address, count, **kwargs):
+        if "retries" in kwargs:
+             raise TypeError("read_holding_registers() got an unexpected keyword argument 'retries'")
+        return mock_res
+
+    hub.read_holding_registers.side_effect = side_effect
 
     # Patch the logger in services module
     with patch("custom_components.ha_modbus_debugger.services._LOGGER") as mock_logger:
