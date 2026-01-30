@@ -284,6 +284,7 @@ async def setup_services(hass: HomeAssistant):
 
         # Adjust timeout on the client (Retries handled via kwargs)
         old_timeout = None
+        old_retries = None
         comm_params = None
 
         if hub._client:
