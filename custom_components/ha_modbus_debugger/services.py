@@ -202,6 +202,7 @@ async def setup_services(hass: HomeAssistant):
         custom_retries = int(call.data.get("custom_retries", 3))
         custom_concurrency = int(call.data.get("custom_concurrency", 10))
         log_to_file = call.data.get("log_to_file", False)
+        log_pymodbus = call.data.get("log_pymodbus", False)
 
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
@@ -221,11 +222,11 @@ async def setup_services(hass: HomeAssistant):
             retries = 0
             concurrency = 1
             is_async = False
-        elif scan_profile == "custom":
+        elif scan_profile in ["custom_async", "custom_sync"]:
             timeout = custom_timeout
             retries = custom_retries
             concurrency = custom_concurrency
-            is_async = True
+            is_async = (scan_profile == "custom_async")
 
         # Calculate estimate
         num_units = end_unit - start_unit + 1
@@ -263,37 +264,61 @@ async def setup_services(hass: HomeAssistant):
                 _LOGGER.setLevel(logging.INFO)
 
             _LOGGER.info(
-                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Estimated time: %.2fs. (Pymodbus logging suppressed)",
+                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Estimated time: %.2fs. (Pymodbus logging: %s)",
                 start_unit,
                 end_unit,
                 scan_profile,
                 est_time,
+                "Enabled" if log_pymodbus else "Suppressed"
             )
 
         # Suppress logging
         pymodbus_logger = logging.getLogger("pymodbus")
         original_level = pymodbus_logger.level
-        pymodbus_logger.setLevel(logging.CRITICAL)
+        if not log_pymodbus:
+            pymodbus_logger.setLevel(logging.CRITICAL)
 
-        # Adjust timeout if possible
+        # Adjust timeout and retries on the client
         old_timeout = None
+        old_retries = None
         comm_params = None
 
-        if hub._client and hasattr(hub._client, "comm_params"):
-            comm_params = hub._client.comm_params
-            # Check for 'timeout' or 'timeout_connect'
-            if hasattr(comm_params, "timeout"):
-                old_timeout = comm_params.timeout
-                comm_params.timeout = timeout
-            elif hasattr(comm_params, "timeout_connect"):
-                old_timeout = comm_params.timeout_connect
-                comm_params.timeout_connect = timeout
+        if hub._client:
+            # Handle different Pymodbus versions
+            if hasattr(hub._client, "comm_params"):
+                comm_params = hub._client.comm_params
+
+                # Update Timeout
+                if hasattr(comm_params, "timeout"):
+                    old_timeout = comm_params.timeout
+                    comm_params.timeout = timeout
+                elif hasattr(comm_params, "timeout_connect"):
+                    old_timeout = comm_params.timeout_connect
+                    comm_params.timeout_connect = timeout
+
+                # Update Retries
+                if hasattr(comm_params, "retries"):
+                    old_retries = comm_params.retries
+                    comm_params.retries = retries
+
+            # Fallback/Direct attribute update (for some versions or if comm_params didn't cover it)
+            if hasattr(hub._client, "retries"):
+                if old_retries is None:
+                    old_retries = hub._client.retries
+                hub._client.retries = retries
 
         found_devices = []
         semaphore = asyncio.Semaphore(concurrency)
 
         async def scan_unit(unit_id):
             async with semaphore:
+                # IMPORTANT: Reset error count to prevent auto-close logic in Pymodbus
+                if hub._client:
+                    # Try to find the state object where error_count lives
+                    if hasattr(hub._client, "state"):
+                        hub._client.state.error_count = 0
+                    # Some versions might store it elsewhere, but state.error_count is standard in v3.x
+
                 # Retry logic
                 for attempt in range(retries + 1):
 
@@ -341,16 +366,26 @@ async def setup_services(hass: HomeAssistant):
                 await t
 
         # Restore logging and timeout
-        pymodbus_logger.setLevel(original_level)
+        if not log_pymodbus:
+            pymodbus_logger.setLevel(original_level)
+
         if log_to_file:
             _LOGGER.info("Modbus Scan Complete. Found %s devices.", len(found_devices))
             _LOGGER.setLevel(original_logger_level)
 
-        if old_timeout is not None and comm_params:
-            if hasattr(comm_params, "timeout"):
-                comm_params.timeout = old_timeout
-            elif hasattr(comm_params, "timeout_connect"):
-                comm_params.timeout_connect = old_timeout
+        # Restore Client Params
+        if comm_params:
+            if old_timeout is not None:
+                if hasattr(comm_params, "timeout"):
+                    comm_params.timeout = old_timeout
+                elif hasattr(comm_params, "timeout_connect"):
+                    comm_params.timeout_connect = old_timeout
+
+            if old_retries is not None and hasattr(comm_params, "retries"):
+                comm_params.retries = old_retries
+
+        if old_retries is not None and hasattr(hub._client, "retries"):
+            hub._client.retries = old_retries
 
         return {
             "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),
