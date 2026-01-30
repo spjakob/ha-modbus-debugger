@@ -185,11 +185,11 @@ scan_devices:
       required: false
       default: false
       selector:
-        boolean:
-    log_pymodbus:
-      name: Enable Pymodbus Error Logging
-      description: If enabled, allows Pymodbus to log errors (useful for deep debugging). Default is disabled to keep logs clean.
+        boolean: {}
+    disable_pymodbus_logging:
+      name: Suppress Pymodbus Error Logs
+      description: If enabled, suppresses detailed Pymodbus error logs (keeping logs clean). Disable to debug connection issues.
       required: false
-      default: false
+      default: true
       selector:
-        boolean:
+        boolean: {}
