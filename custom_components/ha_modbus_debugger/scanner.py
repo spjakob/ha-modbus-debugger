@@ -199,6 +199,7 @@ class ModbusScanner:
                 for unit_id in range(start_unit, end_unit + 1):
                     success = False
                     for attempt in range(retries + 1):
+                        req_start_time = time.perf_counter()
                         try:
                             # Connect if needed
                             if writer is None or writer.is_closing():
@@ -210,15 +211,15 @@ class ModbusScanner:
                                     )
                                     _log_debug("Connected.")
                                 except (OSError, asyncio.TimeoutError) as e:
-                                    # Enhance error logging for connection failures
+                                    elapsed = time.perf_counter() - req_start_time
                                     err_msg = str(e)
                                     if isinstance(e, asyncio.TimeoutError):
-                                        err_msg = "Connection Timeout"
+                                        err_msg = f"Connection Timeout ({elapsed:.2f}s)"
                                     elif isinstance(e, ConnectionRefusedError):
                                         err_msg = "Connection Refused"
                                     elif isinstance(e, socket.gaierror):
                                         err_msg = "Host Name Resolution Failed"
-                                    elif isinstance(e, OSError) and e.errno == 113: # No route to host
+                                    elif isinstance(e, OSError) and e.errno == 113:
                                         err_msg = "No Route to Host"
 
                                     _log_debug(f"Failed to connect to {self.host}:{self.port} - {err_msg}")
@@ -228,7 +229,8 @@ class ModbusScanner:
 
                             _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
                             response = await self._perform_tcp_request(reader, writer, unit_id, register, reg_type, timeout)
-                            _log_debug(f"Received response from Unit {unit_id}: {response.hex()}")
+                            elapsed = time.perf_counter() - req_start_time
+                            _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
 
                             parsed = self._parse_response_packet(b'', response, unit_id)
 
@@ -267,11 +269,11 @@ class ModbusScanner:
                                 success = True
                                 break
                             elif "error" in parsed:
-                                # Logic to retry if parsing error (e.g. CRC/length)
                                 _log_debug(f"Parsing Error Unit {unit_id}: {parsed['error']}")
                                 continue
 
                         except (OSError, asyncio.TimeoutError, EOFError) as e:
+                            elapsed = time.perf_counter() - req_start_time
                             if writer:
                                 writer.close()
                                 try:
@@ -279,6 +281,12 @@ class ModbusScanner:
                                 except: pass
                                 writer = None
                                 reader = None
+
+                            err_str = str(e)
+                            if isinstance(e, asyncio.TimeoutError):
+                                err_str = f"Timeout ({elapsed:.2f}s)"
+
+                            _log_debug(f"Unit {unit_id}: Error - {err_str}")
                             continue
 
                     if not success:
@@ -299,6 +307,7 @@ class ModbusScanner:
         async def scan_one(unit_id):
             async with semaphore:
                 for attempt in range(retries + 1):
+                    req_start_time = time.perf_counter()
                     try:
                         _log_debug(f"Connecting to {self.host}:{self.port} (Unit {unit_id})...")
                         reader, writer = None, None
@@ -308,9 +317,10 @@ class ModbusScanner:
                                 timeout=timeout
                             )
                         except (OSError, asyncio.TimeoutError) as e:
+                            elapsed = time.perf_counter() - req_start_time
                             err_msg = str(e)
                             if isinstance(e, asyncio.TimeoutError):
-                                err_msg = "Connection Timeout"
+                                err_msg = f"Connection Timeout ({elapsed:.2f}s)"
                             elif isinstance(e, ConnectionRefusedError):
                                 err_msg = "Connection Refused"
                             elif isinstance(e, socket.gaierror):
@@ -324,7 +334,8 @@ class ModbusScanner:
                         try:
                             _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
                             response = await self._perform_tcp_request(reader, writer, unit_id, register, reg_type, timeout)
-                            _log_debug(f"Received response from Unit {unit_id}: {response.hex()}")
+                            elapsed = time.perf_counter() - req_start_time
+                            _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
 
                             parsed = self._parse_response_packet(b'', response, unit_id)
                             if "registers" in parsed and parsed["registers"]:
@@ -362,7 +373,12 @@ class ModbusScanner:
                             await writer.wait_closed()
 
                     except (OSError, asyncio.TimeoutError, EOFError) as e:
-                        _log_debug(f"Unit {unit_id}: Error - {e}")
+                        elapsed = time.perf_counter() - req_start_time
+                        err_str = str(e)
+                        if isinstance(e, asyncio.TimeoutError):
+                            err_str = f"Timeout ({elapsed:.2f}s)"
+
+                        _log_debug(f"Unit {unit_id}: Error - {err_str}")
                         continue
 
                 _log_debug(f"Unit {unit_id}: No Response")
@@ -400,6 +416,7 @@ class ModbusScanner:
             for unit_id in range(start_unit, end_unit + 1):
                 success = False
                 for attempt in range(retries + 1):
+                    req_start_time = time.perf_counter()
                     try:
                         _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
                         req = self._build_request_packet(unit_id, reg_type, register, 1)
@@ -410,7 +427,8 @@ class ModbusScanner:
                         # RTU Error: 5 bytes
                         response = ser.read(5)
                         if len(response) < 5:
-                            _log_debug(f"Unit {unit_id}: Incomplete response (Header)")
+                            elapsed = time.perf_counter() - req_start_time
+                            _log_debug(f"Unit {unit_id}: Incomplete/Timeout ({elapsed:.2f}s)")
                             continue
 
                         func = response[1]
@@ -422,7 +440,8 @@ class ModbusScanner:
                         if len(response) < 5:
                             continue
 
-                        _log_debug(f"Received response from Unit {unit_id}: {response.hex()}")
+                        elapsed = time.perf_counter() - req_start_time
+                        _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
 
                         parsed = self._parse_response_packet(req, response, unit_id)
                         if "registers" in parsed and parsed["registers"]:

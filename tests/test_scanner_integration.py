@@ -91,6 +91,12 @@ async def test_scanner_scenarios(mock_gateway):
     # Should NOT be in results (Missing Device)
     assert 3 not in res_map
 
+    # Check that logging captured the timeout with the new format
+    # "Unit 3: Error - Timeout (1.XXs)"
+    timeout_logs = [l for l in logs if "Unit 3: Error - Timeout" in l]
+    assert len(timeout_logs) > 0
+    assert "(" in timeout_logs[0] and "s)" in timeout_logs[0]
+
     # ID 4: Error
     assert 4 in res_map
     assert "error" in res_map[4]
@@ -98,6 +104,9 @@ async def test_scanner_scenarios(mock_gateway):
     # ID 5: Slow (Sleep 0.2s vs Timeout 1s) - Should succeed
     assert 5 in res_map
     assert res_map[5]['value'] == 5555
+    # Verify timing log
+    response_logs = [l for l in logs if "Unit 5: Response (" in l]
+    assert len(response_logs) > 0
 
     # ID 6: Flaky (Fail 1st, Succeed 2nd)
     # Since we have retries=1, it should succeed on 2nd attempt.
