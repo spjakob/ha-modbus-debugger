@@ -185,9 +185,12 @@ class ModbusScanner:
 
     async def scan_tcp(self, start_unit: int, end_unit: int, register: int, reg_type: int,
                        timeout: float, retries: int, concurrency: int,
-                       update_callback=None) -> List[Dict]:
+                       update_callback=None, log_callback=None) -> List[Dict]:
         """Run a TCP Scan (Async)."""
         results = []
+
+        def _log_debug(msg):
+             if log_callback: log_callback(msg)
 
         # Persistent Scan (Sequential) if concurrency == 1
         if concurrency == 1:
@@ -199,12 +202,16 @@ class ModbusScanner:
                         try:
                             # Connect if needed
                             if writer is None or writer.is_closing():
+                                _log_debug(f"Connecting to {self.host}:{self.port}...")
                                 reader, writer = await asyncio.wait_for(
                                     asyncio.open_connection(self.host, self.port),
                                     timeout=timeout
                                 )
+                                _log_debug("Connected.")
 
+                            _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
                             response = await self._perform_tcp_request(reader, writer, unit_id, register, reg_type, timeout)
+                            _log_debug(f"Received response from Unit {unit_id}: {response.hex()}")
 
                             parsed = self._parse_response_packet(b'', response, unit_id)
                             if "registers" in parsed:
@@ -238,8 +245,12 @@ class ModbusScanner:
                                 except: pass
                                 writer = None
                                 reader = None
-                            _LOGGER.debug(f"Scan error unit {unit_id}: {e}")
+                            _log_debug(f"Scan error unit {unit_id}: {e}")
                             continue
+
+                    if not success:
+                         _log_debug(f"Unit {unit_id}: No Response")
+
             finally:
                 if writer:
                     writer.close()
@@ -256,13 +267,16 @@ class ModbusScanner:
             async with semaphore:
                 for attempt in range(retries + 1):
                     try:
+                        _log_debug(f"Connecting to {self.host}:{self.port} (Unit {unit_id})...")
                         reader, writer = await asyncio.wait_for(
                             asyncio.open_connection(self.host, self.port),
                             timeout=timeout
                         )
 
                         try:
+                            _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
                             response = await self._perform_tcp_request(reader, writer, unit_id, register, reg_type, timeout)
+                            _log_debug(f"Received response from Unit {unit_id}: {response.hex()}")
 
                             parsed = self._parse_response_packet(b'', response, unit_id)
                             if "registers" in parsed:
@@ -289,17 +303,23 @@ class ModbusScanner:
                             writer.close()
                             await writer.wait_closed()
 
-                    except (OSError, asyncio.TimeoutError, EOFError):
+                    except (OSError, asyncio.TimeoutError, EOFError) as e:
+                        _log_debug(f"Scan error unit {unit_id}: {e}")
                         continue
+
+                _log_debug(f"Unit {unit_id}: No Response")
 
         tasks = [scan_one(u) for u in range(start_unit, end_unit + 1)]
         await asyncio.gather(*tasks)
         return results
 
     def scan_serial(self, start_unit: int, end_unit: int, register: int, reg_type: int,
-                    timeout: float, retries: int, update_callback=None) -> List[Dict]:
+                    timeout: float, retries: int, update_callback=None, log_callback=None) -> List[Dict]:
         """Run a Serial Scan (Blocking/Sync)."""
         results = []
+
+        def _log_debug(msg):
+             if log_callback: log_callback(msg)
 
         try:
             ser = serial.Serial(
@@ -319,8 +339,10 @@ class ModbusScanner:
             ser.reset_output_buffer()
 
             for unit_id in range(start_unit, end_unit + 1):
+                success = False
                 for attempt in range(retries + 1):
                     try:
+                        _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
                         req = self._build_request_packet(unit_id, reg_type, register, 1)
                         ser.write(req)
                         ser.flush()
@@ -329,6 +351,7 @@ class ModbusScanner:
                         # RTU Error: 5 bytes
                         response = ser.read(5)
                         if len(response) < 5:
+                            _log_debug(f"Unit {unit_id}: Incomplete response (Header)")
                             continue
 
                         func = response[1]
@@ -340,6 +363,8 @@ class ModbusScanner:
                         if len(response) < 5:
                             continue
 
+                        _log_debug(f"Received response from Unit {unit_id}: {response.hex()}")
+
                         parsed = self._parse_response_packet(req, response, unit_id)
                         if "registers" in parsed:
                             res = {
@@ -350,6 +375,7 @@ class ModbusScanner:
                             }
                             results.append(res)
                             if update_callback: update_callback(res)
+                            success = True
                             break
                         elif "exception_code" in parsed:
                             res = {
@@ -360,11 +386,15 @@ class ModbusScanner:
                             }
                             results.append(res)
                             if update_callback: update_callback(res)
+                            success = True
                             break
                     except Exception as e:
-                        _LOGGER.debug(f"Serial scan error unit {unit_id}: {e}")
+                        _log_debug(f"Serial scan error unit {unit_id}: {e}")
                         ser.reset_input_buffer()
                         continue
+
+                if not success:
+                     _log_debug(f"Unit {unit_id}: No Response")
 
         finally:
             if ser.is_open:

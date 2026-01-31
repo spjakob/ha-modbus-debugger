@@ -204,7 +204,8 @@ async def setup_services(hass: HomeAssistant):
         custom_retries = int(call.data.get("custom_retries", 3))
         custom_concurrency = int(call.data.get("custom_concurrency", 10))
         log_to_file = call.data.get("log_to_file", False)
-        # Disable logging param ignored in custom scanner (internal logger used)
+        # We don't use pymodbus for scan, but we respect the param for consistency
+        disable_pymodbus_logging = call.data.get("disable_pymodbus_logging", True)
 
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
@@ -256,13 +257,15 @@ async def setup_services(hass: HomeAssistant):
                 _LOGGER.setLevel(logging.INFO)
 
             _LOGGER.info(
-                "Starting Modbus Scan (Custom Scanner)... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d.",
+                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d. Estimated time: %.2fs. (Pymodbus logging: %s)",
                 start_unit,
                 end_unit,
                 scan_profile,
                 timeout,
                 retries,
-                concurrency
+                concurrency,
+                est_time,
+                "Suppressed" if disable_pymodbus_logging else "Enabled"
             )
 
         # Initialize Scanner
@@ -283,6 +286,15 @@ async def setup_services(hass: HomeAssistant):
                      elif show_debug:
                          trace_log.append(f"Unit {res['unit_id']}: {res['error']}")
 
+        def log_internal(msg):
+            # Mirror scanner events to file logger and trace
+            if log_to_file and show_debug:
+                 _LOGGER.debug(msg)
+
+            # Add to trace if debug
+            if show_debug:
+                 trace_log.append(msg)
+
         # Prepare for Scan - manage shared resource (Serial)
         async with hub._lock:
             # If Serial, we MUST close the hub's connection to free the port
@@ -298,13 +310,15 @@ async def setup_services(hass: HomeAssistant):
                     if is_async:
                         scan_results = await scanner.scan_tcp(
                             start_unit, end_unit, register, reg_type_code,
-                            timeout, retries, concurrency, update_callback=update_trace
+                            timeout, retries, concurrency,
+                            update_callback=update_trace, log_callback=log_internal
                         )
                     else:
                         # Sync scan for TCP - we reuse the implementation but concurrency=1
                         scan_results = await scanner.scan_tcp(
                             start_unit, end_unit, register, reg_type_code,
-                            timeout, retries, 1, update_callback=update_trace
+                            timeout, retries, 1,
+                            update_callback=update_trace, log_callback=log_internal
                         )
                 elif hub._connection_type == CONNECTION_TYPE_SERIAL:
                     # Serial is blocking, run in executor
@@ -312,7 +326,7 @@ async def setup_services(hass: HomeAssistant):
                     scan_results = await hass.async_add_executor_job(
                         scanner.scan_serial,
                         start_unit, end_unit, register, reg_type_code,
-                        timeout, retries, update_trace
+                        timeout, retries, update_trace, log_internal
                     )
             except Exception as e:
                 _LOGGER.error("Scan failed: %s", e)

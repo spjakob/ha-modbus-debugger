@@ -208,12 +208,15 @@ async def async_test_scan_devices_custom_profile_and_logging():
         # Check arguments: start_unit, end_unit, profile, timeout, retries, concurrency
         # The new log message in services.py matches these
         log_args = start_call[0][1:]
-        # Custom Scanner log has different arg count than previous implementation?
-        # services.py: "Starting Modbus Scan (Custom Scanner)... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d."
-        # 6 format args
+
+        # services.py: "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d. Estimated time: %.2fs. (Pymodbus logging: %s)"
+        # 8 format args
         assert log_args[0] == 1
         assert log_args[1] == 2
         assert log_args[2] == "custom_async"
+        assert abs(log_args[3] - 0.5) < 0.001
+        assert log_args[4] == 1
+        assert log_args[5] == 5
 
         # Check "Modbus Scan Complete"
         complete_call = None
