@@ -118,4 +118,5 @@ To set up a local development environment for testing:
 
     ```
 
+For detailed information on the test framework and integration scenarios, see [TESTING.md](TESTING.md).
 
