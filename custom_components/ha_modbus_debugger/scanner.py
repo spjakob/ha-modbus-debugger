@@ -286,7 +286,7 @@ class ModbusScanner:
                             if isinstance(e, asyncio.TimeoutError):
                                 err_str = f"Timeout ({elapsed:.2f}s)"
 
-                            _log_debug(f"Unit {unit_id}: Error - {err_str}")
+                            _log_debug(f"Unit {unit_id}: {err_str}")
                             continue
 
                     if not success:
@@ -378,7 +378,7 @@ class ModbusScanner:
                         if isinstance(e, asyncio.TimeoutError):
                             err_str = f"Timeout ({elapsed:.2f}s)"
 
-                        _log_debug(f"Unit {unit_id}: Error - {err_str}")
+                        _log_debug(f"Unit {unit_id}: {err_str}")
                         continue
 
                 _log_debug(f"Unit {unit_id}: No Response")

@@ -16,25 +16,29 @@ _LOGGER = logging.getLogger(__name__)
 
 PORT = 5021
 
-@pytest_asyncio.fixture
-async def mock_gateway():
-    # Start server in background
-    task = asyncio.create_task(run_server(PORT))
+# We use a session-scoped fixture or robust cleanup to avoid "Address already in use"
+# But pytest-asyncio strict mode makes session-scoped async fixtures tricky with event loops.
+# Let's ensure strict cleanup or use dynamic ports.
+# Dynamic port is safer.
 
-    # Give it a moment to start - 2s might be flaky depending on machine load.
-    # We should retry connection to check if up?
+@pytest_asyncio.fixture
+async def mock_gateway(unused_tcp_port):
+    port = unused_tcp_port
+    task = asyncio.create_task(run_server(port))
+
+    # Wait for start
     for i in range(20):
         try:
-            r, w = await asyncio.open_connection("127.0.0.1", PORT)
+            r, w = await asyncio.open_connection("127.0.0.1", port)
             w.close()
             await w.wait_closed()
             break
         except (OSError, asyncio.TimeoutError):
-            await asyncio.sleep(0.5) # Increase sleep duration
+            await asyncio.sleep(0.1)
     else:
         pytest.fail("Mock Gateway failed to start")
 
-    yield
+    yield port
 
     task.cancel()
     try:
@@ -44,10 +48,11 @@ async def mock_gateway():
 
 @pytest.mark.asyncio
 async def test_scanner_scenarios(mock_gateway):
+    port = mock_gateway
     config = {
         CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
         CONF_HOST: "127.0.0.1",
-        CONF_PORT: PORT
+        CONF_PORT: port
     }
 
     scanner = ModbusScanner(config)
@@ -92,8 +97,8 @@ async def test_scanner_scenarios(mock_gateway):
     assert 3 not in res_map
 
     # Check that logging captured the timeout with the new format
-    # "Unit 3: Error - Timeout (1.XXs)"
-    timeout_logs = [l for l in logs if "Unit 3: Error - Timeout" in l]
+    # "Unit 3: Timeout (1.XXs)"
+    timeout_logs = [l for l in logs if "Unit 3: Timeout" in l]
     assert len(timeout_logs) > 0
     assert "(" in timeout_logs[0] and "s)" in timeout_logs[0]
 
@@ -117,6 +122,42 @@ async def test_scanner_scenarios(mock_gateway):
     id6_logs = [l for l in logs if "Unit 6" in l]
     attempts = [l for l in id6_logs if "Attempt" in l]
     assert len(attempts) >= 2
+
+@pytest.mark.asyncio
+async def test_gateway_congestion(mock_gateway):
+    """Test that concurrent requests causing gateway congestion (head-of-line blocking) leads to timeouts on valid devices."""
+    port = mock_gateway
+    config = {
+        CONF_CONNECTION_TYPE: CONNECTION_TYPE_TCP,
+        CONF_HOST: "127.0.0.1",
+        CONF_PORT: port
+    }
+    scanner = ModbusScanner(config)
+    results = []
+
+    # ID 3 = Timeout (2s). ID 1 = Fast.
+    # Scan 3 then 1 with Concurrency 2.
+    # Request 3 sent. Block 2s.
+    # Request 1 sent (parallel). Gateway is blocked by 3.
+    # If Timeout < 2s, Request 1 will timeout waiting for Gateway.
+
+    await scanner.scan_tcp(
+        start_unit=3, end_unit=4, register=0, reg_type=3,
+        timeout=0.5, # Timeout less than ID 3 sleep
+        retries=0,
+        concurrency=2,
+        update_callback=lambda r: results.append(r)
+    )
+
+    res_map = {r['unit_id']: r for r in results}
+
+    # ID 3 should fail (Timeout)
+    assert 3 not in res_map
+
+    # ID 4 (Fast Error) should FAIL (Timeout) due to congestion caused by ID 3.
+    # Ideally 4 should return "Error" (Device Present), but because 3 blocks the server, 4 times out.
+    # So 4 should NOT be in results.
+    assert 4 not in res_map
 
 @pytest.mark.asyncio
 async def test_gateway_connection_error():

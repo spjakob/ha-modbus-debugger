@@ -20,6 +20,13 @@ from pymodbus.pdu import ExceptionResponse
 
 _LOGGER = logging.getLogger(__name__)
 
+# Shared "Bus" to simulate serialization delay
+class SharedBus:
+    def __init__(self):
+        self.lock = asyncio.Lock()
+
+BUS = SharedBus()
+
 # Custom Data Block to simulate different behaviors based on Unit ID
 class MockSparseDataBlock(ModbusSequentialDataBlock):
     def __init__(self, unit_id):
@@ -29,17 +36,6 @@ class MockSparseDataBlock(ModbusSequentialDataBlock):
 
     def getValues(self, address, count=1):
         """Return values with simulated behavior."""
-        # ID 1 (Healthy)
-        if self.unit_id == 1:
-            return [1234] * count
-
-        # ID 2 (Register Error) - handled by getValues returning None or raising?
-        # Actually context handles this. If we return valid data here, it's fine.
-        # To simulate exception, we might need to do it in the Context level.
-        # But let's see if we can trigger it here.
-        # Pymodbus catches exceptions here and returns SlaveFailure (0x04) usually.
-        # To get 0x02 (Illegal Address), we usually just don't populate the block.
-        # But since we are mocking behavior, let's use the Context wrapper.
         return [0] * count
 
 class MockSlaveContext(ModbusSlaveContext):
@@ -66,7 +62,13 @@ class MockSlaveContext(ModbusSlaveContext):
 class TimeoutContext(ModbusSlaveContext):
     def getValues(self, fc, address, count=1):
         import time
-        time.sleep(2.0) # Blocking sleep to force client timeout
+        # Simulate BUS blocking
+        # We can't use await here easily because getValues might be sync in some backends,
+        # but pymodbus AsyncTcpServer usually runs in executor or handles sync?
+        # Actually StartAsyncTcpServer runs in loop.
+        # If getValues is blocking (time.sleep), it BLOCKS THE LOOP.
+        # This is EXACTLY what happens on a single-threaded server/gateway.
+        time.sleep(2.0) # Blocking sleep to force client timeout AND block other requests
         return super().getValues(fc, address, count)
 
 class SlowContext(ModbusSlaveContext):
@@ -77,20 +79,6 @@ class SlowContext(ModbusSlaveContext):
 
 class ErrorContext(ModbusSlaveContext):
     def getValues(self, fc, address, count=1):
-        # Force Exception
-        # In Pymodbus, returning ExceptionResponse or error code?
-        # Looking at docs, getValues returns list of values.
-        # If we raise exception?
-        # Or return empty list?
-        # Let's try raising an Exception or returning None?
-        # Pymodbus server usually catches and sends SlaveFailure.
-        # To send specific code like 0x02 (Illegal Address), we might not be able to do it easily here.
-        # However, if we assume ErrorContext simulates "Device Present but Error",
-        # returning a value that triggers an error downstream might work.
-        # But wait, if we want to simulate connection or missing register,
-        # we can just not initialize the data block.
-        # But this context was initialized with data.
-        # Let's try returning None.
         return None # Should trigger error?
 
 class FlakyContext(ModbusSlaveContext):
