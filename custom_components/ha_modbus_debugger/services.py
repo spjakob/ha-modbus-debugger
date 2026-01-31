@@ -13,8 +13,9 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import ServiceValidationError
 
-from .const import DOMAIN
+from .const import DOMAIN, CONNECTION_TYPE_SERIAL, CONNECTION_TYPE_TCP
 from .modbus import ModbusHub
+from .scanner import ModbusScanner, READ_HOLDING_REGISTERS, READ_INPUT_REGISTERS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -203,8 +204,7 @@ async def setup_services(hass: HomeAssistant):
         custom_retries = int(call.data.get("custom_retries", 3))
         custom_concurrency = int(call.data.get("custom_concurrency", 10))
         log_to_file = call.data.get("log_to_file", False)
-        # Default True for suppression
-        disable_pymodbus_logging = call.data.get("disable_pymodbus_logging", True)
+        # Disable logging param ignored in custom scanner (internal logger used)
 
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
@@ -217,7 +217,7 @@ async def setup_services(hass: HomeAssistant):
         timeout = 0.1
         retries = 0
         concurrency = 50
-        is_async = True
+        is_async = True # Affects TCP mostly
 
         if scan_profile == "sync_quick":
             timeout = 0.1
@@ -230,46 +230,22 @@ async def setup_services(hass: HomeAssistant):
             concurrency = custom_concurrency
             is_async = (scan_profile == "custom_async")
 
+        # Map register type
+        reg_type_code = READ_HOLDING_REGISTERS
+        if register_type == "input":
+            reg_type_code = READ_INPUT_REGISTERS
+
         # Calculate estimate
         num_units = end_unit - start_unit + 1
         est_time = (num_units * timeout * (retries + 1)) / concurrency
+        if not is_async and hub._connection_type == CONNECTION_TYPE_TCP:
+             # Sync TCP is sequential
+             est_time = (num_units * timeout * (retries + 1))
 
         if show_trace:
             trace_log.append(
                 f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}. Profile: {scan_profile}"
             )
-            trace_log.append("Verifying connection...")
-
-        # Verify connection ONCE before scanning loop
-        if not await hub.connect():
-            error_msg = hub.last_error or "Unknown Connection Error"
-            if show_trace:
-                trace_log.append(f"Connection Failed: {error_msg}")
-                if "111" in str(error_msg) or "Refused" in str(error_msg):
-                    trace_log.append("Check IP/Port. Ensure no other integration is holding the connection open.")
-
-            return {
-                "error": "Connection Failed",
-                "reason": error_msg,
-                "trace": trace_log,
-            }
-
-        if show_trace:
-            trace_log.append("Connected. Beginning scan loop...")
-
-        # Temporarily adjust client settings for scan (Pymodbus v3+)
-        # We must update both client.comm_params and ctx.comm_params as they are separate instances.
-        
-        # 1. Timeout (timeout_connect)
-        orig_client_timeout = hub._client.comm_params.timeout_connect
-        orig_ctx_timeout = hub._client.ctx.comm_params.timeout_connect
-        
-        hub._client.comm_params.timeout_connect = timeout
-        hub._client.ctx.comm_params.timeout_connect = timeout
-        
-        # 2. Retries
-        orig_ctx_retries = hub._client.ctx.retries
-        hub._client.ctx.retries = retries
 
         # Log to file setup
         original_logger_level = _LOGGER.level
@@ -280,86 +256,88 @@ async def setup_services(hass: HomeAssistant):
                 _LOGGER.setLevel(logging.INFO)
 
             _LOGGER.info(
-                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d. Estimated time: %.2fs. (Pymodbus logging: %s)",
+                "Starting Modbus Scan (Custom Scanner)... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d.",
                 start_unit,
                 end_unit,
                 scan_profile,
                 timeout,
                 retries,
-                concurrency,
-                est_time,
-                "Suppressed" if disable_pymodbus_logging else "Enabled"
+                concurrency
             )
 
-        # Suppress logging
-        pymodbus_logger = logging.getLogger("pymodbus")
-        original_level = pymodbus_logger.level
-        if disable_pymodbus_logging:
-            pymodbus_logger.setLevel(logging.CRITICAL)
+        # Initialize Scanner
+        scanner = ModbusScanner(hub._config)
 
-        found_devices = []
-        semaphore = asyncio.Semaphore(concurrency)
-
+        # Determine Execution Strategy
+        scan_results = []
         scan_start_time = time.perf_counter()
 
-        async def scan_unit(unit_id):
-            async with semaphore:
-                if log_to_file and show_debug:
-                    _LOGGER.debug("Sending request to Unit %s", unit_id)
+        def update_trace(res):
+            if show_trace:
+                if "value" in res and res["value"] is not None:
+                     trace_log.append(f"Unit {res['unit_id']}: Found (Value {res['value']})")
+                elif "error" in res:
+                     # Show errors if debug, or if it's a specific Modbus exception
+                     if "Exception Code" in res.get("error", ""):
+                         trace_log.append(f"Unit {res['unit_id']}: Exception Response ({res['error']})")
+                     elif show_debug:
+                         trace_log.append(f"Unit {res['unit_id']}: {res['error']}")
 
-                if register_type == "input":
-                    result = await hub.read_input_registers(unit_id, register, 1)
-                else:
-                    result = await hub.read_holding_registers(unit_id, register, 1)
+        # Prepare for Scan - manage shared resource (Serial)
+        async with hub._lock:
+            # If Serial, we MUST close the hub's connection to free the port
+            was_connected = False
+            if hub._connection_type == CONNECTION_TYPE_SERIAL:
+                if hub._client and hub._client.connected:
+                    was_connected = True
+                    if show_trace: trace_log.append("Closing existing Serial connection for exclusive scan access...")
+                    await hub.close()
 
-                if log_to_file and show_debug:
-                    _LOGGER.debug(
-                        "Received response from Unit %s: %s", unit_id, result
+            try:
+                if hub._connection_type == CONNECTION_TYPE_TCP:
+                    if is_async:
+                        scan_results = await scanner.scan_tcp(
+                            start_unit, end_unit, register, reg_type_code,
+                            timeout, retries, concurrency, update_callback=update_trace
+                        )
+                    else:
+                        # Sync scan for TCP - we reuse the implementation but concurrency=1
+                        scan_results = await scanner.scan_tcp(
+                            start_unit, end_unit, register, reg_type_code,
+                            timeout, retries, 1, update_callback=update_trace
+                        )
+                elif hub._connection_type == CONNECTION_TYPE_SERIAL:
+                    # Serial is blocking, run in executor
+                    if show_trace: trace_log.append("Starting Serial Scan (Blocking)...")
+                    scan_results = await hass.async_add_executor_job(
+                        scanner.scan_serial,
+                        start_unit, end_unit, register, reg_type_code,
+                        timeout, retries, update_trace
                     )
-
-                if result is not None and not result.isError():
-                    val = result.registers[0]
-                    found_devices.append(
-                        {
-                            "unit_id": unit_id,
-                            "register": register,
-                            "value": val,
-                            "hex": f"0x{val:04X}",
-                        }
-                    )
-                    if show_trace:
-                        trace_log.append(f"Unit {unit_id}: Found (Value {val})")
-                    return
-
-                if show_debug:
-                    trace_log.append(f"Unit {unit_id}: No Response")
-
-        tasks = []
-        for unit_id in range(start_unit, end_unit + 1):
-            tasks.append(scan_unit(unit_id))
-
-        if is_async:
-            await asyncio.gather(*tasks)
-        else:
-            for t in tasks:
-                await t
+            except Exception as e:
+                _LOGGER.error("Scan failed: %s", e)
+                if show_trace: trace_log.append(f"Critical Scan Error: {e}")
+                scan_results = [{"error": str(e)}]
+            finally:
+                # We don't need to explicitly reconnect serial, Hub does it on demand.
+                pass
 
         scan_duration = time.perf_counter() - scan_start_time
 
-        # Restore logging and client settings
-        if disable_pymodbus_logging:
-            pymodbus_logger.setLevel(original_level)
-
-        hub._client.comm_params.timeout_connect = orig_client_timeout
-        hub._client.ctx.comm_params.timeout_connect = orig_ctx_timeout
-        hub._client.ctx.retries = orig_ctx_retries
+        # Format Results
+        found_devices = []
+        for res in scan_results:
+            if "error" not in res or "Exception Code" in res.get("error", ""):
+                 # Include successful reads AND Modbus Exceptions (Device present)
+                 # If it's an exception, value is None.
+                 found_devices.append(res)
 
         if log_to_file:
             _LOGGER.info("Modbus Scan Complete. Found %s devices. Duration: %.2fs", len(found_devices), scan_duration)
             _LOGGER.setLevel(original_logger_level)
 
         return {
-            "found_devices": sorted(found_devices, key=lambda x: x['unit_id']),
+            "found_devices": sorted(found_devices, key=lambda x: x.get('unit_id', 0)),
             "count": len(found_devices),
             "scanned_range": f"{start_unit}-{end_unit}",
             "scan_duration": scan_duration,
