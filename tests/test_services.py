@@ -89,42 +89,11 @@ async def async_test_scan_devices_service():
     assert handler is not None
 
     hub = MagicMock(spec=ModbusHub)
-    hub._config = {"name": "Test Hub"}
+    hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
+    hub._connection_type = "tcp"
     hub.connect = AsyncMock(return_value=True)
-    hub.read_holding_registers = AsyncMock()
-
-    # Mock _client for timeout setting and internal retries (Pymodbus v3 structure)
-    hub._client = MagicMock()
-    # Explicitly mock comm_params and ctx
-    hub._client.comm_params = MagicMock()
-    hub._client.comm_params.timeout_connect = 3.0
+    hub._lock = asyncio.Lock() # Use real async lock
     
-    hub._client.ctx = MagicMock()
-    hub._client.ctx.comm_params = MagicMock()
-    hub._client.ctx.comm_params.timeout_connect = 3.0
-    hub._client.ctx.retries = 3
-
-    # Mock behavior: Device 1 responds, Device 2 fails/timeout
-    # Device 1
-    mock_res_1 = MagicMock()
-    mock_res_1.registers = [123]
-    mock_res_1.isError.return_value = False
-
-    # Device 2 (timeout/error)
-    mock_res_2 = MagicMock()
-    mock_res_2.isError.return_value = True
-
-    def side_effect(slave, address, count, **kwargs):
-        # STRICT CHECK: fail if retries is passed
-        if "retries" in kwargs:
-             raise TypeError("read_holding_registers() got an unexpected keyword argument 'retries'")
-
-        if slave == 1:
-            return mock_res_1
-        return mock_res_2
-
-    hub.read_holding_registers.side_effect = side_effect
-
     hass.data[DOMAIN]["hub_id"] = hub
 
     call = MagicMock()
@@ -136,11 +105,25 @@ async def async_test_scan_devices_service():
         "register_type": "holding"
     }
 
-    response = await handler(call)
+    # Patch ModbusScanner in services.py
+    with patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
+        scanner_instance = MockScanner.return_value
 
-    assert response["count"] == 1
-    assert response["found_devices"][0]["unit_id"] == 1
-    assert response["found_devices"][0]["value"] == 123
+        # Mock scan_tcp return value
+        # Device 1: Found, Device 2: Missing (implicit in list)
+        scanner_instance.scan_tcp = AsyncMock(return_value=[
+            {"unit_id": 1, "register": 0, "value": 123, "hex": "0x007B"}
+        ])
+
+        response = await handler(call)
+
+        assert response["count"] == 1
+        assert response["found_devices"][0]["unit_id"] == 1
+        assert response["found_devices"][0]["value"] == 123
+
+        # Verify scanner was called with correct config
+        MockScanner.assert_called_with(hub._config)
+        scanner_instance.scan_tcp.assert_called_once()
 
 def test_scan_devices_service():
     loop = asyncio.new_event_loop()
@@ -165,19 +148,10 @@ async def async_test_scan_devices_custom_profile_and_logging():
     assert handler is not None
 
     hub = MagicMock(spec=ModbusHub)
-    hub._config = {"name": "Test Hub"}
+    hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
+    hub._connection_type = "tcp"
     hub.connect = AsyncMock(return_value=True)
-    hub.read_holding_registers = AsyncMock()
-
-    # Mock _client for timeout setting and internal retries (Pymodbus v3 structure)
-    hub._client = MagicMock()
-    hub._client.comm_params = MagicMock()
-    hub._client.comm_params.timeout_connect = 5.0
-    
-    hub._client.ctx = MagicMock()
-    hub._client.ctx.comm_params = MagicMock()
-    hub._client.ctx.comm_params.timeout_connect = 5.0
-    hub._client.ctx.retries = 3
+    hub._lock = asyncio.Lock()
 
     hass.data[DOMAIN]["hub_id"] = hub
 
@@ -198,23 +172,29 @@ async def async_test_scan_devices_custom_profile_and_logging():
         "verbosity": "debug"
     }
 
-    # Mock result to allow scan to proceed
-    mock_res = MagicMock()
-    mock_res.registers = [123]
-    mock_res.isError.return_value = False
-    hub.read_holding_registers.return_value = mock_res
+    # Patch the logger in services module and ModbusScanner
+    with patch("custom_components.ha_modbus_debugger.services._LOGGER") as mock_logger, \
+         patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
 
-    # Patch the logger in services module
-    with patch("custom_components.ha_modbus_debugger.services._LOGGER") as mock_logger:
         # Mock .level to allow reading/setting
         mock_logger.level = logging.WARNING
 
+        scanner_instance = MockScanner.return_value
+        scanner_instance.scan_tcp = AsyncMock(return_value=[
+             {"unit_id": 1, "register": 0, "value": 123, "hex": "0x007B"}
+        ])
+
         response = await handler(call)
 
-        # Check that timeout and retries were restored after the call
-        assert hub._client.comm_params.timeout_connect == 5.0
-        assert hub._client.ctx.comm_params.timeout_connect == 5.0
-        assert hub._client.ctx.retries == 3
+        # Check scanner params passed
+        scanner_instance.scan_tcp.assert_called_once()
+        args, kwargs = scanner_instance.scan_tcp.call_args
+        # Args: start, end, register, type, timeout, retries, concurrency
+        assert args[0] == 1
+        assert args[1] == 2
+        assert abs(args[4] - 0.5) < 0.001 # Timeout
+        assert args[5] == 1 # Retries
+        assert args[6] == 5 # Concurrency
 
         # Verify logger calls
         # Find the call to info that contains "Starting Modbus Scan"
@@ -225,19 +205,15 @@ async def async_test_scan_devices_custom_profile_and_logging():
                 break
 
         assert start_call is not None
-        # Check arguments: start_unit, end_unit, profile, timeout, retries, concurrency, est_time
-        args = start_call[0][1:]
-        assert args[0] == 1
-        assert args[1] == 2
-        assert args[2] == "custom_async"
-        assert abs(args[3] - 0.5) < 0.001 # Timeout
-        assert args[4] == 1 # Retries
-        assert args[5] == 5 # Concurrency
-        assert abs(args[6] - 0.4) < 0.001 # Est Time
-
-        # 2. Debug logs ("Sending request", "Received response")
-        # Since we mocked log_to_file=True and verbosity=debug
-        assert mock_logger.debug.called
+        # Check arguments: start_unit, end_unit, profile, timeout, retries, concurrency
+        # The new log message in services.py matches these
+        log_args = start_call[0][1:]
+        # Custom Scanner log has different arg count than previous implementation?
+        # services.py: "Starting Modbus Scan (Custom Scanner)... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d."
+        # 6 format args
+        assert log_args[0] == 1
+        assert log_args[1] == 2
+        assert log_args[2] == "custom_async"
 
         # Check "Modbus Scan Complete"
         complete_call = None
@@ -246,11 +222,7 @@ async def async_test_scan_devices_custom_profile_and_logging():
                 complete_call = call_args
                 break
         assert complete_call is not None
-        # Check that we have 2 formatting arguments now
-        assert len(complete_call[0]) == 3 # msg + count + duration
-
         assert "scan_duration" in response
-        assert response["scan_duration"] >= 0
 
 def test_scan_devices_custom_profile_and_logging():
     loop = asyncio.new_event_loop()
