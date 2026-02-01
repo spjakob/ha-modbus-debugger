@@ -43,9 +43,11 @@ async def setup_services(hass: HomeAssistant):
             if len(hubs) == 1:
                 hub = next(iter(hubs.values()))
             else:
-                raise ServiceValidationError(
-                    "Multiple hubs found. Please specify hub_id."
-                )
+                # If multiple hubs, but none selected, default to first?
+                # User asked: "Make sure to select first item in the drop down."
+                # We can implement this logic here if hub_id is missing.
+                hub = next(iter(hubs.values()))
+                # raise ServiceValidationError("Multiple hubs found. Please specify hub_id.")
         return hub
 
     async def handle_read_register(call: ServiceCall) -> ServiceResponse:
@@ -55,13 +57,13 @@ async def setup_services(hass: HomeAssistant):
         register = call.data["register"]
         count = call.data.get("count", 1)
         register_type = call.data.get("register_type", "holding")
+        data_type_filter = call.data.get("data_type", "all")
 
         timeout = float(call.data.get("timeout", 2.0))
         retries = int(call.data.get("retries", 0))
 
-        verbosity = call.data.get("verbosity", "detailed")
-        show_trace = verbosity in ["detailed", "debug"]
-        show_debug = verbosity == "debug"
+        # Always debug/detailed logic for read_register now (trace needed)
+        show_debug = True
 
         trace_log = []
 
@@ -72,8 +74,7 @@ async def setup_services(hass: HomeAssistant):
         if 'port' in hub._config and hub._config['port'] != 502 and hub._config.get('connection_type') == CONNECTION_TYPE_TCP:
              trace_log.append(f"NOTE: Using non-standard port {hub._config['port']}. Standard Modbus TCP usually uses port 502. If you experience timeouts, check if your gateway requires port 502 to enable Modbus TCP mode.")
 
-        if show_trace:
-            trace_log.append(f"Target: {hub._config.get('name')} ({target_info})")
+        trace_log.append(f"Target: {hub._config.get('name')} ({target_info})")
 
         # Map register type
         reg_type_code = READ_HOLDING_REGISTERS
@@ -82,8 +83,7 @@ async def setup_services(hass: HomeAssistant):
 
         scanner = ModbusScanner(hub._config)
 
-        if show_trace:
-             trace_log.append(f"Reading {count} register(s) from Unit {unit_id} Address {register} ({register_type}). Timeout={timeout}s, Retries={retries}.")
+        trace_log.append(f"Reading {count} register(s) from Unit {unit_id} Address {register} ({register_type}). Timeout={timeout}s, Retries={retries}.")
 
         result_data = None
 
@@ -103,7 +103,7 @@ async def setup_services(hass: HomeAssistant):
              if hub._connection_type == CONNECTION_TYPE_SERIAL:
                  if hub._client and hub._client.connected:
                      was_connected = True
-                     if show_trace: trace_log.append("Closing existing Serial connection...")
+                     trace_log.append("Closing existing Serial connection...")
                      await hub.close()
 
              try:
@@ -120,7 +120,7 @@ async def setup_services(hass: HomeAssistant):
                           timeout, retries, log_internal
                       )
              except Exception as e:
-                  if show_trace: trace_log.append(f"Critical Error: {e}")
+                  trace_log.append(f"Critical Error: {e}")
                   return {"error": str(e), "trace": trace_log}
              finally:
                  # Hub will reconnect on demand
@@ -130,7 +130,7 @@ async def setup_services(hass: HomeAssistant):
              return {"error": "Unknown Error", "trace": trace_log}
 
         if "error" in result_data:
-             if show_trace: trace_log.append(f"Read Failed: {result_data['error']}")
+             trace_log.append(f"Read Failed: {result_data['error']}")
              return {
                  "error": "Read Failed",
                  "reason": result_data["error"],
@@ -139,64 +139,82 @@ async def setup_services(hass: HomeAssistant):
 
         registers = result_data.get("registers", [])
 
-        if show_trace:
-            trace_log.append(f"Success. Received {len(registers)} registers.")
+        trace_log.append(f"Success. Received {len(registers)} registers.")
 
         # Consolidated Table View
         table_data = []
-        for i, val in enumerate(registers):
+
+        # Helper to determine step size
+        # 16-bit types: step 1
+        # 32-bit types: step 2
+        # all: step 1 (show everything)
+        step = 1
+        if "32" in data_type_filter and data_type_filter != "all":
+            step = 2
+
+        i = 0
+        while i < len(registers):
+            val = registers[i]
             addr = register + i
 
-            # Base formats
-            row = {
-                "address": addr,
-                "int16": struct.unpack(">h", struct.pack(">H", val))[0],
-                "uint16": val,
-                "hex": f"0x{val:04X}",
-                "bin": f"{val:016b}"
-            }
+            row = {"address": addr}
 
-            # Char
-            b = struct.pack(">H", val)
-            chars = ""
-            for byte in b:
-                if 32 <= byte <= 126: chars += chr(byte)
-                else: chars += "."
-            row["char"] = chars
+            # Populate based on filter
+            if data_type_filter == "all" or data_type_filter in ["uint16", "int16", "hex", "bin", "char", "float16"]:
+                if data_type_filter == "all" or data_type_filter == "int16":
+                    row["int16"] = struct.unpack(">h", struct.pack(">H", val))[0]
+                if data_type_filter == "all" or data_type_filter == "uint16":
+                    row["uint16"] = val
+                if data_type_filter == "all" or data_type_filter == "float16":
+                    try:
+                        row["float16"] = float(struct.unpack(">e", struct.pack(">H", val))[0])
+                    except Exception:
+                        row["float16"] = None
+                if data_type_filter == "all" or data_type_filter == "hex":
+                    row["hex"] = f"0x{val:04X}"
+                if data_type_filter == "all" or data_type_filter == "bin":
+                    row["bin"] = f"{val:016b}"
+                if data_type_filter == "all" or data_type_filter == "char":
+                    b = struct.pack(">H", val)
+                    chars = ""
+                    for byte in b:
+                        if 32 <= byte <= 126: chars += chr(byte)
+                        else: chars += "."
+                    row["char"] = chars
 
-            # 32-bit values (Look ahead to next register)
-            # Only valid if next register exists in the block
+            # 32-bit values
             if i + 1 < len(registers):
                 next_val = registers[i+1]
 
-                # Big Endian: reg[i] << 16 | reg[i+1]
-                val_be = (val << 16) | next_val
-                row["int32_be"] = struct.unpack(">i", struct.pack(">I", val_be))[0]
-                row["uint32_be"] = val_be
-                row["float32_be"] = struct.unpack(">f", struct.pack(">I", val_be))[0]
+                if data_type_filter == "all" or "32" in data_type_filter:
+                    # Big Endian: reg[i] << 16 | reg[i+1]
+                    val_be = (val << 16) | next_val
 
-                # Little Endian Word Swap: reg[i+1] << 16 | reg[i]
-                val_le = (next_val << 16) | val
-                row["int32_le_swap"] = struct.unpack(">i", struct.pack(">I", val_le))[0]
-                row["float32_le_swap"] = struct.unpack(">f", struct.pack(">I", val_le))[0]
+                    if data_type_filter == "all" or data_type_filter == "int32_be":
+                        row["int32_be"] = struct.unpack(">i", struct.pack(">I", val_be))[0]
+                    if data_type_filter == "all" or data_type_filter == "uint32_be":
+                        row["uint32_be"] = val_be
+                    if data_type_filter == "all" or data_type_filter == "float32_be":
+                        row["float32_be"] = struct.unpack(">f", struct.pack(">I", val_be))[0]
+
+                    # Little Endian Word Swap: reg[i+1] << 16 | reg[i]
+                    val_le = (next_val << 16) | val
+
+                    if data_type_filter == "all" or data_type_filter == "int32_le_swap":
+                        row["int32_le_swap"] = struct.unpack(">i", struct.pack(">I", val_le))[0]
+                    if data_type_filter == "all" or data_type_filter == "float32_le_swap":
+                        row["float32_le_swap"] = struct.unpack(">f", struct.pack(">I", val_le))[0]
 
             table_data.append(row)
+            i += step
 
         response = {
             "debug_info": f"Read {len(registers)} registers from Unit {unit_id}, Address {register}. Success.",
-            "table": table_data
+            "table": table_data,
+            "trace": trace_log
         }
-        if show_trace:
-            response["trace"] = trace_log
 
         return response
-
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_READ_REGISTER,
-        handle_read_register,
-        supports_response=SupportsResponse.ONLY,
-    )
 
     async def handle_scan_devices(call: ServiceCall) -> ServiceResponse:
         """Handle the scan_devices service."""

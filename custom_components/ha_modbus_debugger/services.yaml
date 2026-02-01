@@ -50,6 +50,38 @@ read_register:
               value: holding
             - label: Input Register
               value: input
+    data_type:
+      name: Data Type (View)
+      description: Select specific data type to display in the table, or 'Everything' for all.
+      required: true
+      default: all
+      selector:
+        select:
+          options:
+            - label: Everything
+              value: all
+            - label: UInt16
+              value: uint16
+            - label: Int16
+              value: int16
+            - label: Float16
+              value: float16
+            - label: Hex
+              value: hex
+            - label: Binary
+              value: bin
+            - label: UInt32 (Big Endian)
+              value: uint32_be
+            - label: Int32 (Big Endian)
+              value: int32_be
+            - label: Float32 (Big Endian)
+              value: float32_be
+            - label: Int32 (Little Endian Swap)
+              value: int32_le_swap
+            - label: Float32 (Little Endian Swap)
+              value: float32_le_swap
+            - label: Char
+              value: char
     timeout:
       name: Timeout
       description: Timeout in seconds for each request.
@@ -71,20 +103,6 @@ read_register:
           min: 0
           max: 5
           mode: box
-    verbosity:
-      name: Verbose Level
-      description: Control the level of detail in the output.
-      required: true
-      default: detailed
-      selector:
-        select:
-          options:
-            - label: Basic (Result Only)
-              value: basic
-            - label: Detailed (Connection Info)
-              value: detailed
-            - label: Debug (Full Trace)
-              value: debug
 
 scan_devices:
   name: Scan for Devices
