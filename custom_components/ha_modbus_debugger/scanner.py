@@ -112,7 +112,7 @@ class ModbusScanner:
                 "error": "Modbus Exception",
                 "exception_code": exception_code,
                 "raw": response_data.hex(),
-                "unit_id": unit_id # Confirmed ID
+                "unit_id": unit_id
             }
 
         if len(pdu_data) < 2:
@@ -137,11 +137,9 @@ class ModbusScanner:
     def _read_exactly_sync(self, sock, n, timeout, start_time_ref=None):
         """Read exactly n bytes from socket (Sync)."""
         data = b''
-        # If start_time_ref is provided, use it to calculate remaining timeout
-        # Otherwise start new timer
         start_time = start_time_ref if start_time_ref else time.perf_counter()
 
-        sock.settimeout(timeout) # Initial safe timeout, but we adjust manually in loop if needed
+        sock.settimeout(timeout)
 
         while len(data) < n:
             remaining = n - len(data)
@@ -168,7 +166,7 @@ class ModbusScanner:
             # Header: 7 bytes
             header = self._read_exactly_sync(sock, 7, timeout, start_time)
             length_field = struct.unpack('>H', header[4:6])[0]
-            remaining = length_field - 1 # UnitID is in header[6] (already read), length includes it
+            remaining = length_field - 1
 
             if remaining > 0:
                 pdu = self._read_exactly_sync(sock, remaining, timeout, start_time)
@@ -184,7 +182,6 @@ class ModbusScanner:
             if func_code >= 0x80:
                 expected_remaining = 3 # Code(1) + CRC(2)
             else:
-                # We don't know count yet. We need to read ByteCount(1)
                 byte_count_b = self._read_exactly_sync(sock, 1, timeout, start_time)
                 byte_count = byte_count_b[0]
                 header += byte_count_b
@@ -197,7 +194,6 @@ class ModbusScanner:
         """Read a full RTU packet from serial."""
         start_time = time.perf_counter()
 
-        # Check timeout for read loop
         def check_timeout():
             if (time.perf_counter() - start_time) > timeout:
                 raise socket.timeout("Serial Timeout")
@@ -210,7 +206,6 @@ class ModbusScanner:
             ser.timeout = remaining_time
             chunk = ser.read(2 - len(header))
             if not chunk:
-                # If we timeout here, it's just no data
                 raise socket.timeout("Serial Timeout")
             header += chunk
 
@@ -220,7 +215,6 @@ class ModbusScanner:
         if func >= 0x80:
             remaining = 3 # Code(1) + CRC(2)
         else:
-            # Read Byte Count
             byte_count_b = b''
             while len(byte_count_b) < 1:
                 check_timeout()
@@ -248,10 +242,7 @@ class ModbusScanner:
     def _perform_request_with_match(self, send_func, read_func, unit_id, register, count, reg_type, timeout, log_func):
         """
         Send Request and Read Response with 'Read-Until-Match' logic.
-        send_func: callable() -> None (sends the packet)
-        read_func: callable(timeout) -> bytes (reads a full packet)
         """
-        # Send
         send_func()
 
         start_time = time.perf_counter()
@@ -267,16 +258,13 @@ class ModbusScanner:
             except (socket.timeout, EOFError):
                 raise
 
-            # Parse to check ID
-            # We pass empty request_packet because we don't use it for simple parsing
             parsed = self._parse_response_packet(b'', response, unit_id)
 
             if "error" in parsed and "Unit ID mismatch" in parsed.get("error", ""):
                 found = parsed.get("found_id")
                 log_func(f"WARNING: Ghost data: Unit {found} response received while scanning Unit {unit_id}. Discarding.")
-                continue # Loop again
+                continue
 
-            # Match or other error
             return response, parsed
 
     def scan_tcp(self, start_unit: int, end_unit: int, register: int, reg_type: int,
@@ -289,12 +277,12 @@ class ModbusScanner:
 
         sock = None
         try:
-            _log(f"Connecting to {self.host}:{self.port}...")
+            _log(f"DEBUG: Connecting to {self.host}:{self.port}...")
             try:
                 sock = socket.create_connection((self.host, self.port), timeout=timeout)
-                _log("Connected.")
+                _log("DEBUG: Connected.")
             except Exception as e:
-                _log(f"Connection Failed: {e}")
+                _log(f"DEBUG: Connection Failed: {e}")
                 return [{"error": str(e)}]
 
             for unit_id in range(start_unit, end_unit + 1):
@@ -306,16 +294,15 @@ class ModbusScanner:
                             try:
                                 sock = socket.create_connection((self.host, self.port), timeout=timeout)
                             except Exception as e:
-                                _log(f"Unit {unit_id}: Connection Failed - {e}")
+                                _log(f"DEBUG: Unit {unit_id}: Connection Failed - {e}")
                                 break
 
-                        # Check for Ghost Data (Pre-send drain)
+                        # Check for Ghost Data
                         r, _, _ = select.select([sock], [], [], 0)
                         if r:
                             ghost = sock.recv(1024)
-                            _log(f"Unit {unit_id}: WARNING - Ghost data cleared before sending: {ghost.hex()}")
+                            _log(f"WARNING: Unit {unit_id}: Ghost data cleared before sending: {ghost.hex()}")
 
-                        # Prepare Send/Read functions
                         def send_tcp():
                             _log(f"DEBUG: Sending request to Unit {unit_id}...")
                             req = self._build_request_packet(unit_id, reg_type, register, 1, transaction_id=unit_id)
@@ -324,7 +311,6 @@ class ModbusScanner:
                         def read_tcp(t):
                             return self._read_packet_tcp_sync(sock, unit_id, t)
 
-                        # Execute Read-Until-Match
                         response, parsed = self._perform_request_with_match(
                             send_tcp, read_tcp, unit_id, register, 1, reg_type, timeout, _log
                         )
@@ -338,7 +324,8 @@ class ModbusScanner:
                                 "unit_id": unit_id,
                                 "register": register,
                                 "value": val,
-                                "hex": f"0x{val:04X}"
+                                "hex": f"0x{val:04X}",
+                                "elapsed": elapsed
                             }
                             results.append(res)
                             if update_callback: update_callback(res)
@@ -350,7 +337,8 @@ class ModbusScanner:
                                 "unit_id": unit_id,
                                 "register": register,
                                 "value": None,
-                                "error": f"Exception Code {parsed['exception_code']}"
+                                "error": f"Exception Code {parsed['exception_code']}",
+                                "elapsed": elapsed
                             }
                             results.append(res)
                             if update_callback: update_callback(res)
@@ -369,8 +357,16 @@ class ModbusScanner:
                             if sock: sock.close()
                             sock = None
 
-                        # Only log final failure if out of retries, or log every attempt as debug
                         _log(f"DEBUG: Unit {unit_id}: {err_str} ({elapsed:.2f}s)")
+
+                        # Store timeout result for heuristics
+                        if not success and attempt == retries:
+                             results.append({
+                                 "unit_id": unit_id,
+                                 "error": err_str,
+                                 "elapsed": elapsed
+                             })
+
                         continue
 
         finally:
@@ -399,7 +395,7 @@ class ModbusScanner:
                 timeout=timeout
             )
         except Exception as e:
-            _log(f"Failed to open port: {e}")
+            _log(f"DEBUG: Failed to open port: {e}")
             return [{"error": f"Failed to open port: {e}"}]
 
         try:
@@ -411,10 +407,9 @@ class ModbusScanner:
                 for attempt in range(retries + 1):
                     req_start_time = time.perf_counter()
                     try:
-                        # Check Ghost Data
                         if ser.in_waiting > 0:
                             ghost = ser.read(ser.in_waiting)
-                            _log(f"Unit {unit_id}: WARNING - Ghost data cleared before sending: {ghost.hex()}")
+                            _log(f"WARNING: Unit {unit_id}: Ghost data cleared before sending: {ghost.hex()}")
 
                         def send_serial():
                             _log(f"DEBUG: Sending request to Unit {unit_id}...")
@@ -438,7 +433,8 @@ class ModbusScanner:
                                 "unit_id": unit_id,
                                 "register": register,
                                 "value": val,
-                                "hex": f"0x{val:04X}"
+                                "hex": f"0x{val:04X}",
+                                "elapsed": elapsed
                             }
                             results.append(res)
                             if update_callback: update_callback(res)
@@ -450,7 +446,8 @@ class ModbusScanner:
                                 "unit_id": unit_id,
                                 "register": register,
                                 "value": None,
-                                "error": f"Exception Code {parsed['exception_code']}"
+                                "error": f"Exception Code {parsed['exception_code']}",
+                                "elapsed": elapsed
                             }
                             results.append(res)
                             if update_callback: update_callback(res)
@@ -467,6 +464,14 @@ class ModbusScanner:
                         if "Timeout" in str(e):
                              err_str = "Timeout"
                         _log(f"DEBUG: Unit {unit_id}: {err_str} ({elapsed:.2f}s)")
+
+                        if not success and attempt == retries:
+                             results.append({
+                                 "unit_id": unit_id,
+                                 "error": err_str,
+                                 "elapsed": elapsed
+                             })
+
                         ser.reset_input_buffer()
                         continue
 
@@ -476,15 +481,6 @@ class ModbusScanner:
             _log("INFO: Scan complete. Connection closed.")
 
         return results
-
-    # Re-implement read_registers_tcp/serial using the new helpers?
-    # For now, I will leave them as single-shot unless user complains about Ghost Data on read_registers too.
-    # But to be safe, I should update them to use _read_packet_tcp_sync structure at least.
-    # The current read_registers implementation uses _perform_tcp_request_sync which I removed/refactored.
-    # Wait, I removed `_perform_tcp_request_sync` in the code above? No, I deleted it.
-    # So `read_registers_tcp` will break if I don't update it.
-
-    # Let's fix read_registers_tcp to use `_perform_request_with_match` as well (robustness).
 
     def read_registers_tcp(self, unit_id: int, register: int, count: int, reg_type: int,
                           timeout: float, retries: int, log_callback=None) -> Dict[str, Any]:
@@ -519,7 +515,6 @@ class ModbusScanner:
 
             for attempt in range(retries + 1):
                 try:
-                    # Drain
                     r, _, _ = select.select([sock], [], [], 0)
                     if r: sock.recv(1024)
 
@@ -528,17 +523,7 @@ class ModbusScanner:
                         sock.sendall(req)
 
                     def read_func(t):
-                        # _read_packet_tcp_sync handles single register or block?
-                        # It reads header then PDU based on length. PDU length depends on byte count in response.
-                        # The logic in _read_packet_tcp_sync is generic for TCP (reads length from header).
-                        # For RTU over TCP, it needs to know structure?
-                        # My _read_packet_tcp_sync for RTU over TCP was hardcoded for 1 register response size?
-                        # Let's check _read_packet_tcp_sync.
                         return self._read_packet_tcp_sync(sock, unit_id, t)
-
-                    # Wait, _read_packet_tcp_sync logic for RTU over TCP:
-                    # "expected_remaining = byte_count + 2". It reads byte_count from the stream.
-                    # So it supports variable length. Good.
 
                     response, parsed = self._perform_request_with_match(
                         send_func, read_func, unit_id, register, count, reg_type, timeout, _log

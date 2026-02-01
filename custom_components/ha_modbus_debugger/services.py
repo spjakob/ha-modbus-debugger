@@ -68,6 +68,10 @@ async def setup_services(hass: HomeAssistant):
         # Target info
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
 
+        # Heuristic 1: Non-standard port
+        if 'port' in hub._config and hub._config['port'] != 502 and hub._config.get('connection_type') == CONNECTION_TYPE_TCP:
+             trace_log.append(f"NOTE: Using non-standard port {hub._config['port']}. Standard Modbus TCP usually uses port 502. If you experience timeouts, check if your gateway requires port 502 to enable Modbus TCP mode.")
+
         if show_trace:
             trace_log.append(f"Target: {hub._config.get('name')} ({target_info})")
 
@@ -85,7 +89,12 @@ async def setup_services(hass: HomeAssistant):
 
         def log_internal(msg):
              if show_debug:
-                 trace_log.append(msg)
+                 # Strip prefixes
+                 clean_msg = msg
+                 if clean_msg.startswith("DEBUG: "): clean_msg = clean_msg[7:]
+                 if clean_msg.startswith("INFO: "): clean_msg = clean_msg[6:]
+                 if clean_msg.startswith("WARNING: "): clean_msg = clean_msg[9:]
+                 trace_log.append(clean_msg)
 
         # Execute Sync
         async with hub._lock:
@@ -155,9 +164,6 @@ async def setup_services(hass: HomeAssistant):
         response["table"] = table_data
 
         # Conversions (Only for first item or logical blocks, but "registers" has raw data)
-        # We keep legacy fields for backward compatibility if count is small?
-        # Or just provide them for the whole block?
-        # The UI likely expects "int16", "uint16" lists.
 
         response["int16"] = [
             struct.unpack(">h", struct.pack(">H", r))[0] for r in registers
@@ -235,6 +241,10 @@ async def setup_services(hass: HomeAssistant):
         trace_log = []
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
 
+        # Heuristic 1: Non-standard port
+        if 'port' in hub._config and hub._config['port'] != 502 and hub._config.get('connection_type') == CONNECTION_TYPE_TCP:
+             trace_log.append(f"NOTE: Using non-standard port {hub._config['port']}. Standard Modbus TCP usually uses port 502. If you experience timeouts, check if your gateway requires port 502 to enable Modbus TCP mode.")
+
         # Map register type
         reg_type_code = READ_HOLDING_REGISTERS
         if register_type == "input":
@@ -289,9 +299,13 @@ async def setup_services(hass: HomeAssistant):
             if log_to_file and show_debug:
                  _LOGGER.debug(msg)
 
-            # Add to trace if debug
             if show_debug:
-                 trace_log.append(msg)
+                 # Strip prefixes
+                 clean_msg = msg
+                 if clean_msg.startswith("DEBUG: "): clean_msg = clean_msg[7:]
+                 if clean_msg.startswith("INFO: "): clean_msg = clean_msg[6:]
+                 if clean_msg.startswith("WARNING: "): clean_msg = clean_msg[9:]
+                 trace_log.append(clean_msg)
 
         # Prepare for Scan - manage shared resource (Serial)
         async with hub._lock:
@@ -337,11 +351,29 @@ async def setup_services(hass: HomeAssistant):
 
         # Format Results
         found_devices = []
+        hard_timeout_count = 0
+        gateway_exception_count = 0
+
         for res in scan_results:
+            # Analyze for Heuristic 2
+            if "error" in res:
+                 if "Exception Code" in res.get("error", ""):
+                     gateway_exception_count += 1
+
+                 # Check elapsed time if available
+                 if "elapsed" in res:
+                     # Hard timeout: elapsed >= timeout * 0.95
+                     if res["elapsed"] >= (timeout * 0.95):
+                         hard_timeout_count += 1
+
             if "error" not in res or "Exception Code" in res.get("error", ""):
                  # Include successful reads AND Modbus Exceptions (Device present)
                  # If it's an exception, value is None.
                  found_devices.append(res)
+
+        # Apply Heuristic 2: Timeout Diagnosis Tip
+        if hard_timeout_count > 0 and gateway_exception_count == 0:
+             trace_log.append("Tip: Devices timed out at the full limit. This usually indicates either the Timeout setting is too low for your Gateway's response speed, or the Gateway is in 'Transparent Mode' (waiting for RS485 timeouts). Try increasing the Timeout or checking Gateway settings.")
 
         if log_to_file:
             _LOGGER.info("Modbus Scan Complete. Found %s devices. Duration: %.2fs", len(found_devices), scan_duration)
