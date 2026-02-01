@@ -245,6 +245,10 @@ async def setup_services(hass: HomeAssistant):
         if 'port' in hub._config and hub._config['port'] != 502 and hub._config.get('connection_type') == CONNECTION_TYPE_TCP:
              trace_log.append(f"NOTE: Using non-standard port {hub._config['port']}. Standard Modbus TCP usually uses port 502. If you experience timeouts, check if your gateway requires port 502 to enable Modbus TCP mode.")
 
+        # Heuristic: Fast Timeout Warning
+        if timeout < 0.6:
+             trace_log.append(f"WARNING: Timeout ({timeout}s) is very fast. Most Gateways need ~600ms to detect dead devices. If you use a timeout lower than the Gateway's internal limit, you will likely see 'Late Recovery' logs or missed devices.")
+
         # Map register type
         reg_type_code = READ_HOLDING_REGISTERS
         if register_type == "input":

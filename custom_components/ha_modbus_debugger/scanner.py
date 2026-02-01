@@ -112,7 +112,7 @@ class ModbusScanner:
                 "error": "Modbus Exception",
                 "exception_code": exception_code,
                 "raw": response_data.hex(),
-                "unit_id": unit_id
+                "unit_id": unit_id # Confirmed ID
             }
 
         if len(pdu_data) < 2:
@@ -239,13 +239,16 @@ class ModbusScanner:
 
         return header + rest
 
-    def _perform_request_with_match(self, send_func, read_func, unit_id, register, count, reg_type, timeout, log_func):
+    def _perform_request_with_match(self, send_func, read_func, unit_id, register, count, reg_type, timeout, log_func, valid_id_range=None):
         """
         Send Request and Read Response with 'Read-Until-Match' logic.
+        Implements Late Response Recovery if valid_id_range is provided.
+        Returns: (late_results_list, final_response_bytes, final_parsed_dict)
         """
         send_func()
 
         start_time = time.perf_counter()
+        late_results = []
 
         while True:
             elapsed = time.perf_counter() - start_time
@@ -261,16 +264,40 @@ class ModbusScanner:
             parsed = self._parse_response_packet(b'', response, unit_id)
 
             if "error" in parsed and "Unit ID mismatch" in parsed.get("error", ""):
-                found = parsed.get("found_id")
-                log_func(f"WARNING: Ghost data: Unit {found} response received while scanning Unit {unit_id}. Discarding.")
+                found_id = parsed.get("found_id")
+
+                # Late Recovery Logic
+                if valid_id_range and found_id in valid_id_range:
+                    # It's a valid delayed packet! Parse it fully as a result.
+                    # Re-parse treating found_id as expected to get data
+                    parsed_recovery = self._parse_response_packet(b'', response, found_id)
+
+                    if "registers" in parsed_recovery and parsed_recovery["registers"]:
+                        val = parsed_recovery["registers"][0]
+                        log_func(f"INFO: Unit {found_id}: Found (Late Recovery) - Data: 0x{val:04X} (Waiting for {unit_id})")
+                        res = {
+                            "unit_id": found_id,
+                            "register": register, # Assumption: Delayed packet corresponds to same register address query
+                            "value": val,
+                            "hex": f"0x{val:04X}",
+                            "elapsed": elapsed, # Timing relative to current request
+                            "note": "Late Recovery"
+                        }
+                        late_results.append(res)
+                    else:
+                        log_func(f"WARNING: Ghost data: Unit {found_id} response received. Malformed or Exception.")
+                else:
+                    log_func(f"WARNING: Ghost data: Unit {found_id} response received while scanning Unit {unit_id}. Discarding.")
+
                 continue
 
-            return response, parsed
+            return late_results, response, parsed
 
     def scan_tcp(self, start_unit: int, end_unit: int, register: int, reg_type: int,
                        timeout: float, retries: int, update_callback=None, log_callback=None) -> List[Dict]:
         """Run a TCP Scan (Sync/Blocking) with Read-Until-Match."""
         results = []
+        valid_range = range(start_unit, end_unit + 1)
 
         def _log(msg):
              if log_callback: log_callback(msg)
@@ -311,9 +338,14 @@ class ModbusScanner:
                         def read_tcp(t):
                             return self._read_packet_tcp_sync(sock, unit_id, t)
 
-                        response, parsed = self._perform_request_with_match(
-                            send_tcp, read_tcp, unit_id, register, 1, reg_type, timeout, _log
+                        late_res, response, parsed = self._perform_request_with_match(
+                            send_tcp, read_tcp, unit_id, register, 1, reg_type, timeout, _log, valid_range
                         )
+
+                        # Process Late Results first
+                        for lr in late_res:
+                            results.append(lr)
+                            if update_callback: update_callback(lr)
 
                         elapsed = time.perf_counter() - req_start_time
 
@@ -380,6 +412,7 @@ class ModbusScanner:
                     timeout: float, retries: int, update_callback=None, log_callback=None) -> List[Dict]:
         """Run a Serial Scan (Blocking/Sync) with Read-Until-Match."""
         results = []
+        valid_range = range(start_unit, end_unit + 1)
 
         def _log(msg):
              if log_callback: log_callback(msg)
@@ -420,9 +453,13 @@ class ModbusScanner:
                         def read_serial(t):
                             return self._read_packet_serial_sync(ser, t)
 
-                        response, parsed = self._perform_request_with_match(
-                            send_serial, read_serial, unit_id, register, 1, reg_type, timeout, _log
+                        late_res, response, parsed = self._perform_request_with_match(
+                            send_serial, read_serial, unit_id, register, 1, reg_type, timeout, _log, valid_range
                         )
+
+                        for lr in late_res:
+                            results.append(lr)
+                            if update_callback: update_callback(lr)
 
                         elapsed = time.perf_counter() - req_start_time
 
@@ -525,9 +562,12 @@ class ModbusScanner:
                     def read_func(t):
                         return self._read_packet_tcp_sync(sock, unit_id, t)
 
-                    response, parsed = self._perform_request_with_match(
+                    late, response, parsed = self._perform_request_with_match(
                         send_func, read_func, unit_id, register, count, reg_type, timeout, _log
                     )
+                    # For simple read register, we ignore late recovery of OTHER units?
+                    # Or should we handle it? Usually read_register is for a specific unit.
+                    # Late response would be weird here unless user just scanned.
                     return parsed
 
                 except Exception as e:
@@ -580,7 +620,7 @@ class ModbusScanner:
                     def read_func(t):
                         return self._read_packet_serial_sync(ser, t)
 
-                    response, parsed = self._perform_request_with_match(
+                    late, response, parsed = self._perform_request_with_match(
                         send_func, read_func, unit_id, register, count, reg_type, timeout, _log
                     )
                     return parsed
