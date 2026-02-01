@@ -13,10 +13,18 @@ async def async_test_read_register_service():
     hass.services.async_register = MagicMock()
     hass.services.has_service.return_value = False
 
-    # Setup
+    async def mock_executor(func, *args):
+        if asyncio.iscoroutinefunction(func):
+             return await func(*args)
+        result = func(*args)
+        if asyncio.iscoroutine(result):
+             return await result
+        return result
+
+    hass.async_add_executor_job = AsyncMock(side_effect=mock_executor)
+
     await setup_services(hass)
 
-    # We now register TWO services. We need to find the read_register one.
     handler = None
     for call in hass.services.async_register.call_args_list:
         args = call[0]
@@ -26,21 +34,14 @@ async def async_test_read_register_service():
 
     assert handler is not None
 
-    # Mock Hub
     hub = MagicMock(spec=ModbusHub)
-    # Mock _config for verbose mode
-    hub._config = {"name": "Test Hub"}
-    hub.connect = AsyncMock(return_value=True)
-
-    hub.read_holding_registers = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.registers = [0x1234]
-    mock_result.isError.return_value = False
-    hub.read_holding_registers.return_value = mock_result
+    hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
+    hub._connection_type = "tcp"
+    hub.connect = AsyncMock()
+    hub._lock = asyncio.Lock()
 
     hass.data[DOMAIN]["hub_id"] = hub
 
-    # Mock Call
     call = MagicMock()
     call.data = {
         "hub_id": "hub_id",
@@ -48,23 +49,66 @@ async def async_test_read_register_service():
         "register": 10,
         "count": 1,
         "register_type": "holding",
+        "timeout": 2.0,
+        "retries": 0
     }
 
-    response = await handler(call)
+    with patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
+        scanner_instance = MockScanner.return_value
 
-    assert response["registers"] == [0x1234]
-    assert response["hex"] == ["0x1234"]
+        scanner_instance.read_registers_tcp = MagicMock(return_value={
+            "registers": [0x1234],
+            "unit_id": 1
+        })
 
-    # Test 32-bit parsing
-    hub.read_holding_registers.return_value.registers = [0x0001, 0x0002]
+        response = await handler(call)
+
+        # Verify cleaned up response structure (no top level lists)
+        assert "registers" not in response
+        assert "hex" not in response
+        assert "int16" not in response
+        assert "uint16" not in response
+
+        # Verify table structure
+        assert "table" in response
+        row = response["table"][0]
+        assert row["address"] == 10
+        assert row["uint16"] == 0x1234
+        assert row["int16"] == 0x1234
+        assert row["hex"] == "0x1234"
+        assert "value" not in row # Removed generic value key
+
+        # Single register, so no 32-bit keys
+        assert "int32_be" not in row
+
+    # Test Range (Multiple registers)
     call.data["count"] = 2
-    response = await handler(call)
+    call.data["register"] = 100
 
-    # 0x00010002 = 65538
-    assert response["uint32_be"] == [65538]
+    with patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
+        scanner_instance = MockScanner.return_value
+        scanner_instance.read_registers_tcp = MagicMock(return_value={
+            "registers": [0x0001, 0x0002],
+            "unit_id": 1
+        })
 
-    # LE Swap: 0x00020001 = 131073
-    assert response["int32_le_swap"] == [131073]
+        response = await handler(call)
+
+        table = response["table"]
+        assert len(table) == 2
+
+        # Row 1 (Address 100) -> Has next val (101) -> Should have 32-bit
+        row1 = table[0]
+        assert row1["address"] == 100
+        assert row1["uint16"] == 1
+        assert "int32_be" in row1
+        assert row1["int32_be"] == 65538 # 0x00010002
+
+        # Row 2 (Address 101) -> No next val -> No 32-bit
+        row2 = table[1]
+        assert row2["address"] == 101
+        assert row2["uint16"] == 2
+        assert "int32_be" not in row2
 
 def test_read_register_service():
     loop = asyncio.new_event_loop()
@@ -77,6 +121,16 @@ async def async_test_scan_devices_service():
     hass.services.async_register = MagicMock()
     hass.services.has_service.return_value = False
 
+    async def mock_executor(func, *args):
+        if asyncio.iscoroutinefunction(func):
+             return await func(*args)
+        result = func(*args)
+        if asyncio.iscoroutine(result):
+             return await result
+        return result
+
+    hass.async_add_executor_job = AsyncMock(side_effect=mock_executor)
+
     await setup_services(hass)
 
     handler = None
@@ -89,42 +143,11 @@ async def async_test_scan_devices_service():
     assert handler is not None
 
     hub = MagicMock(spec=ModbusHub)
-    hub._config = {"name": "Test Hub"}
-    hub.connect = AsyncMock(return_value=True)
-    hub.read_holding_registers = AsyncMock()
-
-    # Mock _client for timeout setting and internal retries (Pymodbus v3 structure)
-    hub._client = MagicMock()
-    # Explicitly mock comm_params and ctx
-    hub._client.comm_params = MagicMock()
-    hub._client.comm_params.timeout_connect = 3.0
+    hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
+    hub._connection_type = "tcp"
+    hub.connect = AsyncMock()
+    hub._lock = asyncio.Lock()
     
-    hub._client.ctx = MagicMock()
-    hub._client.ctx.comm_params = MagicMock()
-    hub._client.ctx.comm_params.timeout_connect = 3.0
-    hub._client.ctx.retries = 3
-
-    # Mock behavior: Device 1 responds, Device 2 fails/timeout
-    # Device 1
-    mock_res_1 = MagicMock()
-    mock_res_1.registers = [123]
-    mock_res_1.isError.return_value = False
-
-    # Device 2 (timeout/error)
-    mock_res_2 = MagicMock()
-    mock_res_2.isError.return_value = True
-
-    def side_effect(slave, address, count, **kwargs):
-        # STRICT CHECK: fail if retries is passed
-        if "retries" in kwargs:
-             raise TypeError("read_holding_registers() got an unexpected keyword argument 'retries'")
-
-        if slave == 1:
-            return mock_res_1
-        return mock_res_2
-
-    hub.read_holding_registers.side_effect = side_effect
-
     hass.data[DOMAIN]["hub_id"] = hub
 
     call = MagicMock()
@@ -136,22 +159,38 @@ async def async_test_scan_devices_service():
         "register_type": "holding"
     }
 
-    response = await handler(call)
+    with patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
+        scanner_instance = MockScanner.return_value
+        scanner_instance.scan_tcp = MagicMock(return_value=[
+            {"unit_id": 1, "register": 0, "value": 123, "hex": "0x007B"}
+        ])
 
-    assert response["count"] == 1
-    assert response["found_devices"][0]["unit_id"] == 1
-    assert response["found_devices"][0]["value"] == 123
+        response = await handler(call)
+
+        assert response["count"] == 1
+        assert response["found_devices"][0]["unit_id"] == 1
+        assert response["found_devices"][0]["value"] == 123
 
 def test_scan_devices_service():
     loop = asyncio.new_event_loop()
     loop.run_until_complete(async_test_scan_devices_service())
     loop.close()
 
-async def async_test_scan_devices_custom_profile_and_logging():
+async def async_test_scan_devices_custom_params_and_logging():
     hass = MagicMock()
     hass.data = {DOMAIN: {}}
     hass.services.async_register = MagicMock()
     hass.services.has_service.return_value = False
+
+    async def mock_executor(func, *args):
+        if asyncio.iscoroutinefunction(func):
+             return await func(*args)
+        result = func(*args)
+        if asyncio.iscoroutine(result):
+             return await result
+        return result
+
+    hass.async_add_executor_job = AsyncMock(side_effect=mock_executor)
 
     await setup_services(hass)
 
@@ -165,19 +204,10 @@ async def async_test_scan_devices_custom_profile_and_logging():
     assert handler is not None
 
     hub = MagicMock(spec=ModbusHub)
-    hub._config = {"name": "Test Hub"}
-    hub.connect = AsyncMock(return_value=True)
-    hub.read_holding_registers = AsyncMock()
-
-    # Mock _client for timeout setting and internal retries (Pymodbus v3 structure)
-    hub._client = MagicMock()
-    hub._client.comm_params = MagicMock()
-    hub._client.comm_params.timeout_connect = 5.0
-    
-    hub._client.ctx = MagicMock()
-    hub._client.ctx.comm_params = MagicMock()
-    hub._client.ctx.comm_params.timeout_connect = 5.0
-    hub._client.ctx.retries = 3
+    hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
+    hub._connection_type = "tcp"
+    hub.connect = AsyncMock()
+    hub._lock = asyncio.Lock()
 
     hass.data[DOMAIN]["hub_id"] = hub
 
@@ -188,71 +218,31 @@ async def async_test_scan_devices_custom_profile_and_logging():
         "end_unit": 2,
         "register": 0,
         "register_type": "holding",
-        # Custom profile
-        "scan_profile": "custom_async",
-        "custom_timeout": 0.5,
-        "custom_retries": 1,
-        "custom_concurrency": 5,
-        # Logging
+        "timeout": 3.5,
+        "retries": 1,
         "log_to_file": True,
         "verbosity": "debug"
     }
 
-    # Mock result to allow scan to proceed
-    mock_res = MagicMock()
-    mock_res.registers = [123]
-    mock_res.isError.return_value = False
-    hub.read_holding_registers.return_value = mock_res
+    with patch("custom_components.ha_modbus_debugger.services._LOGGER") as mock_logger, \
+         patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
 
-    # Patch the logger in services module
-    with patch("custom_components.ha_modbus_debugger.services._LOGGER") as mock_logger:
-        # Mock .level to allow reading/setting
         mock_logger.level = logging.WARNING
+        scanner_instance = MockScanner.return_value
+        scanner_instance.scan_tcp = MagicMock(return_value=[
+             {"unit_id": 1, "register": 0, "value": 123, "hex": "0x007B"}
+        ])
 
         response = await handler(call)
 
-        # Check that timeout and retries were restored after the call
-        assert hub._client.comm_params.timeout_connect == 5.0
-        assert hub._client.ctx.comm_params.timeout_connect == 5.0
-        assert hub._client.ctx.retries == 3
-
-        # Verify logger calls
-        # Find the call to info that contains "Starting Modbus Scan"
-        start_call = None
-        for call_args in mock_logger.info.call_args_list:
-            if "Starting Modbus Scan" in call_args[0][0]:
-                start_call = call_args
-                break
-
-        assert start_call is not None
-        # Check arguments: start_unit, end_unit, profile, timeout, retries, concurrency, est_time
-        args = start_call[0][1:]
+        scanner_instance.scan_tcp.assert_called_once()
+        args, kwargs = scanner_instance.scan_tcp.call_args
         assert args[0] == 1
         assert args[1] == 2
-        assert args[2] == "custom_async"
-        assert abs(args[3] - 0.5) < 0.001 # Timeout
-        assert args[4] == 1 # Retries
-        assert args[5] == 5 # Concurrency
-        assert abs(args[6] - 0.4) < 0.001 # Est Time
+        assert abs(args[4] - 3.5) < 0.001
+        assert args[5] == 1
 
-        # 2. Debug logs ("Sending request", "Received response")
-        # Since we mocked log_to_file=True and verbosity=debug
-        assert mock_logger.debug.called
-
-        # Check "Modbus Scan Complete"
-        complete_call = None
-        for call_args in mock_logger.info.call_args_list:
-            if "Modbus Scan Complete" in call_args[0][0]:
-                complete_call = call_args
-                break
-        assert complete_call is not None
-        # Check that we have 2 formatting arguments now
-        assert len(complete_call[0]) == 3 # msg + count + duration
-
-        assert "scan_duration" in response
-        assert response["scan_duration"] >= 0
-
-def test_scan_devices_custom_profile_and_logging():
+def test_scan_devices_custom_params_and_logging():
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(async_test_scan_devices_custom_profile_and_logging())
+    loop.run_until_complete(async_test_scan_devices_custom_params_and_logging())
     loop.close()

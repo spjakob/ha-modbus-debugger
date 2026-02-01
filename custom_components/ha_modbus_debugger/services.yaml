@@ -31,17 +31,17 @@ read_register:
     count:
       name: Count
       description: Number of registers to read.
-      required: false
+      required: true
       default: 1
       selector:
         number:
           min: 1
-          max: 125
+          max: 1000
           mode: box
     register_type:
       name: Register Type
       description: Holding or Input Register.
-      required: false
+      required: true
       default: holding
       selector:
         select:
@@ -50,20 +50,59 @@ read_register:
               value: holding
             - label: Input Register
               value: input
-    verbosity:
-      name: Verbose Level
-      description: Control the level of detail in the output.
+    data_type:
+      name: Data Type (View)
+      description: Select specific data type to display in the table, or 'Everything' for all.
       required: true
-      default: detailed
+      default: all
       selector:
         select:
           options:
-            - label: Basic (Result Only)
-              value: basic
-            - label: Detailed (Connection Info)
-              value: detailed
-            - label: Debug (Full Trace)
-              value: debug
+            - label: Everything
+              value: all
+            - label: UInt16
+              value: uint16
+            - label: Int16
+              value: int16
+            - label: Float16
+              value: float16
+            - label: Hex
+              value: hex
+            - label: Binary
+              value: bin
+            - label: UInt32 (Big Endian)
+              value: uint32_be
+            - label: Int32 (Big Endian)
+              value: int32_be
+            - label: Float32 (Big Endian)
+              value: float32_be
+            - label: Int32 (Little Endian Swap)
+              value: int32_le_swap
+            - label: Float32 (Little Endian Swap)
+              value: float32_le_swap
+            - label: Char
+              value: char
+    timeout:
+      name: Timeout
+      description: Timeout in seconds for each request.
+      required: true
+      default: 2.0
+      selector:
+        number:
+          min: 0.1
+          max: 10.0
+          step: 0.1
+          mode: box
+    retries:
+      name: Retries
+      description: Number of retries if connection fails.
+      required: true
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
 
 scan_devices:
   name: Scan for Devices
@@ -90,7 +129,7 @@ scan_devices:
       name: End Unit ID
       description: The Unit ID to end scanning at.
       required: true
-      default: 247
+      default: 10
       selector:
         number:
           min: 1
@@ -99,7 +138,7 @@ scan_devices:
     register:
       name: Register Address
       description: The register address to read for verification.
-      required: false
+      required: true
       default: 0
       selector:
         number:
@@ -109,7 +148,7 @@ scan_devices:
     register_type:
       name: Register Type
       description: The type of register to read.
-      required: false
+      required: true
       default: holding
       selector:
         select:
@@ -118,52 +157,26 @@ scan_devices:
               value: holding
             - label: Input Register
               value: input
-    scan_profile:
-      name: Scan Profile
-      description: "Select a predefined scan profile or Custom. Est. Time ≈ (Count * Timeout * (Retries + 1)) / Concurrency"
+    timeout:
+      name: Timeout
+      description: Timeout in seconds for each request.
       required: true
-      default: async_quick
-      selector:
-        select:
-          options:
-            - label: Quick Scan (Async) - 0.1s, 0 retries
-              value: async_quick
-            - label: Quick Scan (Sync) - 0.1s, 0 retries
-              value: sync_quick
-            - label: Custom Scan (Async)
-              value: custom_async
-            - label: Custom Scan (Sync)
-              value: custom_sync
-    custom_timeout:
-      name: Custom Timeout (Custom Profile Only)
-      description: Timeout in seconds (only for Custom profile).
-      required: false
-      default: 3.0
+      default: 2.0
       selector:
         number:
           min: 0.1
-          max: 60.0
+          max: 10.0
           step: 0.1
           mode: box
-    custom_retries:
-      name: Custom Retries (Custom Profile Only)
-      description: Number of retries (only for Custom profile).
-      required: false
-      default: 3
+    retries:
+      name: Retries
+      description: Number of retries per unit ID if connection fails.
+      required: true
+      default: 0
       selector:
         number:
           min: 0
-          max: 10
-          mode: box
-    custom_concurrency:
-      name: Custom Concurrency (Custom Profile Only)
-      description: Max concurrent requests (only for Custom profile).
-      required: false
-      default: 10
-      selector:
-        number:
-          min: 1
-          max: 100
+          max: 5
           mode: box
     verbosity:
       name: Verbose Level
@@ -184,12 +197,5 @@ scan_devices:
       description: If enabled, logs scan progress and debug info to the Home Assistant log file.
       required: true
       default: false
-      selector:
-        boolean: {}
-    disable_pymodbus_logging:
-      name: Suppress Pymodbus Error Logs
-      description: If enabled, suppresses detailed Pymodbus error logs (keeping logs clean). Disable to debug connection issues.
-      required: true
-      default: true
       selector:
         boolean: {}

@@ -7,7 +7,8 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/generic/ha-modbus-debugger/issues",
   "requirements": [
-    "pymodbus>=3.0.0"
+    "pymodbus>=3.0.0",
+    "pyserial"
   ],
   "version": "1.0.0"
 }
