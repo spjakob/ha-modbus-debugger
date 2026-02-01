@@ -199,12 +199,11 @@ async def setup_services(hass: HomeAssistant):
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
 
-        scan_profile = call.data.get("scan_profile", "async_quick")
+        scan_profile = call.data.get("scan_profile", "async_quick") # kept for compatibility logic
         custom_timeout = float(call.data.get("custom_timeout", 3.0))
         custom_retries = int(call.data.get("custom_retries", 3))
-        custom_concurrency = int(call.data.get("custom_concurrency", 10))
+        # custom_concurrency ignored
         log_to_file = call.data.get("log_to_file", False)
-        # We don't use pymodbus for scan, but we respect the param for consistency
         disable_pymodbus_logging = call.data.get("disable_pymodbus_logging", True)
 
         verbosity = call.data.get("verbosity", "basic")
@@ -217,31 +216,24 @@ async def setup_services(hass: HomeAssistant):
         # Profile Parsing
         timeout = 0.1
         retries = 0
-        concurrency = 1 # Default concurrency reduced to 1 for safety
-        is_async = True # Affects TCP mostly
+        # Concurrency always 1 (Sequential/Serial)
 
         if scan_profile == "sync_quick":
             timeout = 0.1
             retries = 0
-            concurrency = 1
-            is_async = False
         elif scan_profile in ["custom_async", "custom_sync"]:
+            # Treat async/sync profiles same - user preferences for timeout/retries matter
             timeout = custom_timeout
             retries = custom_retries
-            concurrency = custom_concurrency
-            is_async = (scan_profile == "custom_async")
 
         # Map register type
         reg_type_code = READ_HOLDING_REGISTERS
         if register_type == "input":
             reg_type_code = READ_INPUT_REGISTERS
 
-        # Calculate estimate
+        # Calculate estimate (Sequential)
         num_units = end_unit - start_unit + 1
-        est_time = (num_units * timeout * (retries + 1)) / concurrency
-        if not is_async and hub._connection_type == CONNECTION_TYPE_TCP:
-             # Sync TCP is sequential
-             est_time = (num_units * timeout * (retries + 1))
+        est_time = (num_units * timeout * (retries + 1))
 
         if show_trace:
             trace_log.append(
@@ -257,15 +249,13 @@ async def setup_services(hass: HomeAssistant):
                 _LOGGER.setLevel(logging.INFO)
 
             _LOGGER.info(
-                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d. Estimated time: %.2fs. (Pymodbus logging: %s)",
+                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d. Estimated time: %.2fs. (Sequential Sync-in-Executor)",
                 start_unit,
                 end_unit,
                 scan_profile,
                 timeout,
                 retries,
-                concurrency,
-                est_time,
-                "Suppressed" if disable_pymodbus_logging else "Enabled"
+                est_time
             )
 
         # Initialize Scanner
@@ -304,22 +294,21 @@ async def setup_services(hass: HomeAssistant):
                     was_connected = True
                     if show_trace: trace_log.append("Closing existing Serial connection for exclusive scan access...")
                     await hub.close()
+            elif hub._connection_type == CONNECTION_TYPE_TCP:
+                 # Even for TCP, if we want to reuse the socket logic, we don't necessarily need to close hub,
+                 # but since we create a NEW socket in scanner, it's fine.
+                 # Scanner logic is completely independent.
+                 pass
 
             try:
                 if hub._connection_type == CONNECTION_TYPE_TCP:
-                    if is_async:
-                        scan_results = await scanner.scan_tcp(
-                            start_unit, end_unit, register, reg_type_code,
-                            timeout, retries, concurrency,
-                            update_callback=update_trace, log_callback=log_internal
-                        )
-                    else:
-                        # Sync scan for TCP - we reuse the implementation but concurrency=1
-                        scan_results = await scanner.scan_tcp(
-                            start_unit, end_unit, register, reg_type_code,
-                            timeout, retries, 1,
-                            update_callback=update_trace, log_callback=log_internal
-                        )
+                    # Sync scan in executor
+                    if show_trace: trace_log.append("Starting TCP Scan (Sync)...")
+                    scan_results = await hass.async_add_executor_job(
+                        scanner.scan_tcp,
+                        start_unit, end_unit, register, reg_type_code,
+                        timeout, retries, update_trace, log_internal
+                    )
                 elif hub._connection_type == CONNECTION_TYPE_SERIAL:
                     # Serial is blocking, run in executor
                     if show_trace: trace_log.append("Starting Serial Scan (Blocking)...")

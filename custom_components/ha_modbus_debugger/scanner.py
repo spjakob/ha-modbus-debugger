@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import socket
 import struct
@@ -132,44 +131,51 @@ class ModbusScanner:
             "unit_id": unit_id
         }
 
-    async def _read_exactly(self, reader, n, timeout):
-        """Read exactly n bytes from reader."""
+    def _read_exactly_sync(self, sock, n, timeout):
+        """Read exactly n bytes from socket (Sync)."""
         data = b''
         start_time = time.perf_counter()
+        sock.settimeout(timeout)
+
         while len(data) < n:
             remaining = n - len(data)
             elapsed = time.perf_counter() - start_time
             if elapsed >= timeout:
-                raise asyncio.TimeoutError
+                raise socket.timeout
 
-            chunk = await asyncio.wait_for(reader.read(remaining), timeout=timeout - elapsed)
-            if not chunk:
-                raise EOFError("Connection closed")
-            data += chunk
+            # Update timeout for remaining time
+            sock.settimeout(max(0.01, timeout - elapsed))
+
+            try:
+                chunk = sock.recv(remaining)
+                if not chunk:
+                    raise EOFError("Connection closed")
+                data += chunk
+            except socket.timeout:
+                raise
         return data
 
-    async def _perform_tcp_request(self, reader, writer, unit_id, register, reg_type, timeout):
-        """Send request and read response using open connection."""
+    def _perform_tcp_request_sync(self, sock, unit_id, register, reg_type, timeout):
+        """Send request and read response using open socket."""
         req = self._build_request_packet(unit_id, reg_type, register, 1, transaction_id=unit_id)
-        writer.write(req)
-        await writer.drain()
+        sock.sendall(req)
 
         if not self.rtu_over_tcp:
             # Modbus TCP Header: 7 bytes
-            header = await self._read_exactly(reader, 7, timeout)
+            header = self._read_exactly_sync(sock, 7, timeout)
             # header[4:6] is length field
             length_field = struct.unpack('>H', header[4:6])[0]
             # Length includes UnitID (1 byte) which is in header[6]
             remaining = length_field - 1
             if remaining > 0:
-                pdu = await self._read_exactly(reader, remaining, timeout)
+                pdu = self._read_exactly_sync(sock, remaining, timeout)
                 return header + pdu
             return header
 
         else:
             # RTU over TCP
             # Read Unit(1) + Func(1)
-            header = await self._read_exactly(reader, 2, timeout)
+            header = self._read_exactly_sync(sock, 2, timeout)
             func_code = header[1]
 
             expected_remaining = 0
@@ -180,211 +186,114 @@ class ModbusScanner:
                 # Success (Read 1 reg): Bytes(1) + Data(2) + CRC(2) = 5 bytes
                 expected_remaining = 5
 
-            rest = await self._read_exactly(reader, expected_remaining, timeout)
+            rest = self._read_exactly_sync(sock, expected_remaining, timeout)
             return header + rest
 
-    async def scan_tcp(self, start_unit: int, end_unit: int, register: int, reg_type: int,
-                       timeout: float, retries: int, concurrency: int,
-                       update_callback=None, log_callback=None) -> List[Dict]:
-        """Run a TCP Scan (Async)."""
+    def scan_tcp(self, start_unit: int, end_unit: int, register: int, reg_type: int,
+                       timeout: float, retries: int, update_callback=None, log_callback=None) -> List[Dict]:
+        """Run a TCP Scan (Sync/Blocking)."""
         results = []
 
         def _log_debug(msg):
              if log_callback: log_callback(msg)
 
-        # Persistent Scan (Sequential) if concurrency == 1
-        if concurrency == 1:
-            reader, writer = None, None
-            try:
-                for unit_id in range(start_unit, end_unit + 1):
-                    success = False
-                    for attempt in range(retries + 1):
-                        req_start_time = time.perf_counter()
-                        try:
-                            # Connect if needed
-                            if writer is None or writer.is_closing():
-                                _log_debug(f"Connecting to {self.host}:{self.port}...")
-                                try:
-                                    reader, writer = await asyncio.wait_for(
-                                        asyncio.open_connection(self.host, self.port),
-                                        timeout=timeout
-                                    )
-                                    _log_debug("Connected.")
-                                except (OSError, asyncio.TimeoutError) as e:
-                                    elapsed = time.perf_counter() - req_start_time
-                                    err_msg = str(e)
-                                    if isinstance(e, asyncio.TimeoutError):
-                                        err_msg = f"Connection Timeout ({elapsed:.2f}s)"
-                                    elif isinstance(e, ConnectionRefusedError):
-                                        err_msg = "Connection Refused"
-                                    elif isinstance(e, socket.gaierror):
-                                        err_msg = "Host Name Resolution Failed"
-                                    elif isinstance(e, OSError) and e.errno == 113:
-                                        err_msg = "No Route to Host"
-
-                                    _log_debug(f"Failed to connect to {self.host}:{self.port} - {err_msg}")
-                                    writer = None
-                                    reader = None
-                                    raise e
-
-                            _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
-                            response = await self._perform_tcp_request(reader, writer, unit_id, register, reg_type, timeout)
-                            elapsed = time.perf_counter() - req_start_time
-                            _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
-
-                            parsed = self._parse_response_packet(b'', response, unit_id)
-
-                            if "registers" in parsed and parsed["registers"]:
-                                res = {
-                                    "unit_id": unit_id,
-                                    "register": register,
-                                    "value": parsed["registers"][0],
-                                    "hex": f"0x{parsed['registers'][0]:04X}"
-                                }
-                                results.append(res)
-                                if update_callback: update_callback(res)
-                                success = True
-                                break
-                            elif "registers" in parsed and not parsed["registers"]:
-                                # Empty registers?
-                                res = {
-                                    "unit_id": unit_id,
-                                    "register": register,
-                                    "value": None,
-                                    "error": "Empty Response"
-                                }
-                                results.append(res)
-                                if update_callback: update_callback(res)
-                                success = True
-                                break
-                            elif "exception_code" in parsed:
-                                res = {
-                                    "unit_id": unit_id,
-                                    "register": register,
-                                    "value": None,
-                                    "error": f"Exception Code {parsed['exception_code']}"
-                                }
-                                results.append(res)
-                                if update_callback: update_callback(res)
-                                success = True
-                                break
-                            elif "error" in parsed:
-                                _log_debug(f"Parsing Error Unit {unit_id}: {parsed['error']}")
-                                continue
-
-                        except (OSError, asyncio.TimeoutError, EOFError) as e:
-                            elapsed = time.perf_counter() - req_start_time
-                            if writer:
-                                writer.close()
-                                try:
-                                    await writer.wait_closed()
-                                except: pass
-                                writer = None
-                                reader = None
-
-                            err_str = str(e)
-                            if isinstance(e, asyncio.TimeoutError):
-                                err_str = f"Timeout ({elapsed:.2f}s)"
-
-                            _log_debug(f"Unit {unit_id}: {err_str}")
-                            continue
-
-                    if not success:
-                         _log_debug(f"Unit {unit_id}: No Response")
-
-            finally:
-                if writer:
-                    writer.close()
-                    try:
-                        await writer.wait_closed()
-                    except: pass
-
-            return results
-
-        # Concurrent Scan (Connection Per Request)
-        semaphore = asyncio.Semaphore(concurrency)
-
-        async def scan_one(unit_id):
-            async with semaphore:
+        # Persistent Connection
+        sock = None
+        try:
+            for unit_id in range(start_unit, end_unit + 1):
+                success = False
                 for attempt in range(retries + 1):
                     req_start_time = time.perf_counter()
                     try:
-                        _log_debug(f"Connecting to {self.host}:{self.port} (Unit {unit_id})...")
-                        reader, writer = None, None
-                        try:
-                            reader, writer = await asyncio.wait_for(
-                                asyncio.open_connection(self.host, self.port),
-                                timeout=timeout
-                            )
-                        except (OSError, asyncio.TimeoutError) as e:
-                            elapsed = time.perf_counter() - req_start_time
-                            err_msg = str(e)
-                            if isinstance(e, asyncio.TimeoutError):
-                                err_msg = f"Connection Timeout ({elapsed:.2f}s)"
-                            elif isinstance(e, ConnectionRefusedError):
-                                err_msg = "Connection Refused"
-                            elif isinstance(e, socket.gaierror):
-                                err_msg = "Host Name Resolution Failed"
-                            elif isinstance(e, OSError) and e.errno == 113:
-                                err_msg = "No Route to Host"
+                        # Connect if needed
+                        if sock is None:
+                            _log_debug(f"Connecting to {self.host}:{self.port}...")
+                            try:
+                                sock = socket.create_connection((self.host, self.port), timeout=timeout)
+                                _log_debug("Connected.")
+                            except (OSError, socket.timeout) as e:
+                                elapsed = time.perf_counter() - req_start_time
+                                err_msg = str(e)
+                                if isinstance(e, socket.timeout):
+                                    err_msg = f"Connection Timeout ({elapsed:.2f}s)"
+                                elif isinstance(e, ConnectionRefusedError):
+                                    err_msg = "Connection Refused"
+                                elif isinstance(e, socket.gaierror):
+                                    err_msg = "Host Name Resolution Failed"
+                                elif isinstance(e, OSError) and e.errno == 113:
+                                    err_msg = "No Route to Host"
 
-                            _log_debug(f"Unit {unit_id}: Connection Failed - {err_msg}")
+                                _log_debug(f"Failed to connect to {self.host}:{self.port} - {err_msg}")
+                                if sock:
+                                    sock.close()
+                                sock = None
+                                raise e # Trigger retry or fail
+
+                        _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
+                        response = self._perform_tcp_request_sync(sock, unit_id, register, reg_type, timeout)
+                        elapsed = time.perf_counter() - req_start_time
+                        _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
+
+                        parsed = self._parse_response_packet(b'', response, unit_id)
+
+                        if "registers" in parsed and parsed["registers"]:
+                            res = {
+                                "unit_id": unit_id,
+                                "register": register,
+                                "value": parsed["registers"][0],
+                                "hex": f"0x{parsed['registers'][0]:04X}"
+                            }
+                            results.append(res)
+                            if update_callback: update_callback(res)
+                            success = True
+                            break
+                        elif "registers" in parsed and not parsed["registers"]:
+                            res = {
+                                "unit_id": unit_id,
+                                "register": register,
+                                "value": None,
+                                "error": "Empty Response"
+                            }
+                            results.append(res)
+                            if update_callback: update_callback(res)
+                            success = True
+                            break
+                        elif "exception_code" in parsed:
+                            res = {
+                                "unit_id": unit_id,
+                                "register": register,
+                                "value": None,
+                                "error": f"Exception Code {parsed['exception_code']}"
+                            }
+                            results.append(res)
+                            if update_callback: update_callback(res)
+                            success = True
+                            break
+                        elif "error" in parsed:
+                            _log_debug(f"Parsing Error Unit {unit_id}: {parsed['error']}")
                             continue
 
-                        try:
-                            _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
-                            response = await self._perform_tcp_request(reader, writer, unit_id, register, reg_type, timeout)
-                            elapsed = time.perf_counter() - req_start_time
-                            _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
-
-                            parsed = self._parse_response_packet(b'', response, unit_id)
-                            if "registers" in parsed and parsed["registers"]:
-                                res = {
-                                    "unit_id": unit_id,
-                                    "register": register,
-                                    "value": parsed["registers"][0],
-                                    "hex": f"0x{parsed['registers'][0]:04X}"
-                                }
-                                results.append(res)
-                                if update_callback: update_callback(res)
-                                return
-                            elif "registers" in parsed and not parsed["registers"]:
-                                res = {
-                                    "unit_id": unit_id,
-                                    "register": register,
-                                    "value": None,
-                                    "error": "Empty Response"
-                                }
-                                results.append(res)
-                                if update_callback: update_callback(res)
-                                return
-                            elif "exception_code" in parsed:
-                                res = {
-                                    "unit_id": unit_id,
-                                    "register": register,
-                                    "value": None,
-                                    "error": f"Exception Code {parsed['exception_code']}"
-                                }
-                                results.append(res)
-                                if update_callback: update_callback(res)
-                                return
-                        finally:
-                            writer.close()
-                            await writer.wait_closed()
-
-                    except (OSError, asyncio.TimeoutError, EOFError) as e:
+                    except (OSError, socket.timeout, EOFError) as e:
                         elapsed = time.perf_counter() - req_start_time
+                        # Force close on error to reset state
+                        if sock:
+                            sock.close()
+                            sock = None
+
                         err_str = str(e)
-                        if isinstance(e, asyncio.TimeoutError):
+                        if isinstance(e, socket.timeout):
                             err_str = f"Timeout ({elapsed:.2f}s)"
 
                         _log_debug(f"Unit {unit_id}: {err_str}")
                         continue
 
-                _log_debug(f"Unit {unit_id}: No Response")
+                if not success:
+                     _log_debug(f"Unit {unit_id}: No Response")
 
-        tasks = [scan_one(u) for u in range(start_unit, end_unit + 1)]
-        await asyncio.gather(*tasks)
+        finally:
+            if sock:
+                sock.close()
+
         return results
 
     def scan_serial(self, start_unit: int, end_unit: int, register: int, reg_type: int,

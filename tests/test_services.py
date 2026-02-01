@@ -189,12 +189,11 @@ async def async_test_scan_devices_custom_profile_and_logging():
         # Check scanner params passed
         scanner_instance.scan_tcp.assert_called_once()
         args, kwargs = scanner_instance.scan_tcp.call_args
-        # Args: start, end, register, type, timeout, retries, concurrency
+        # Args: start, end, register, type, timeout, retries (No concurrency)
         assert args[0] == 1
         assert args[1] == 2
         assert abs(args[4] - 0.5) < 0.001 # Timeout
         assert args[5] == 1 # Retries
-        assert args[6] == 5 # Concurrency
 
         # Verify logger calls
         # Find the call to info that contains "Starting Modbus Scan"
@@ -205,18 +204,16 @@ async def async_test_scan_devices_custom_profile_and_logging():
                 break
 
         assert start_call is not None
-        # Check arguments: start_unit, end_unit, profile, timeout, retries, concurrency
-        # The new log message in services.py matches these
+        # Check arguments: start_unit, end_unit, profile, timeout, retries, est_time
+        # services.py: "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d. Estimated time: %.2fs. (Sequential Sync-in-Executor)"
+        # 6 format args
         log_args = start_call[0][1:]
-
-        # services.py: "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d, Concurrency=%d. Estimated time: %.2fs. (Pymodbus logging: %s)"
-        # 8 format args
         assert log_args[0] == 1
         assert log_args[1] == 2
         assert log_args[2] == "custom_async"
         assert abs(log_args[3] - 0.5) < 0.001
         assert log_args[4] == 1
-        assert log_args[5] == 5
+        # log_args[5] is est_time
 
         # Check "Modbus Scan Complete"
         complete_call = None
