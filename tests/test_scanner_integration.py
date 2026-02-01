@@ -23,6 +23,9 @@ PORT = 5021
 
 @pytest_asyncio.fixture
 async def mock_gateway(unused_tcp_port):
+    from tests.mock_gateway import BUS
+    BUS.reset() # Reset the lock for the new event loop
+
     port = unused_tcp_port
     task = asyncio.create_task(run_server(port))
 

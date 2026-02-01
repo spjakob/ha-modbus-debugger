@@ -3,116 +3,104 @@ import asyncio
 import logging
 from pymodbus.server import StartAsyncTcpServer
 from pymodbus.datastore import ModbusServerContext
-# Pymodbus v3.x split context
 from pymodbus.datastore import ModbusSequentialDataBlock
 try:
     from pymodbus.datastore import ModbusSlaveContext
 except ImportError:
-    # v3.11+ might use DeviceContext? Or BaseDeviceContext
-    # Actually in v3.11 it seems ModbusSlaveContext was renamed or moved?
-    # Let's check 'context' submodule.
-    # It is ModbusSlaveContext in v3.0, but output showed ModbusBaseDeviceContext, ModbusDeviceContext.
-    # It seems ModbusSlaveContext is gone or renamed to ModbusDeviceContext?
     from pymodbus.datastore import ModbusDeviceContext as ModbusSlaveContext
 
-# from pymodbus.device import ModbusDeviceIdentification # Not needed and might be moved
 from pymodbus.pdu import ExceptionResponse
 
 _LOGGER = logging.getLogger(__name__)
 
-# Shared "Bus" to simulate serialization delay
+# Shared "Bus" to simulate serialization delay using asyncio.Lock
+# We need to initialize the lock lazily because the mock server might run in a different loop/thread context in tests?
+# Pymodbus StartAsyncTcpServer runs in the current loop.
+# The tests run in the current loop.
+# But 'BUS = SharedBus()' creates the Lock at module level, potentially with the WRONG loop if created before test loop starts?
+# Yes, asyncio.Lock() captures the *current* loop on init. If imported before test loop, it's bound to a closed or different loop.
+
 class SharedBus:
     def __init__(self):
-        self.lock = asyncio.Lock()
+        self._lock = None
+
+    @property
+    def lock(self):
+        # We need to ensure the lock is created on the *current* loop where it's accessed.
+        # But a single Lock cannot cross loops.
+        # The Mock Gateway runs in the same loop as the test in this setup?
+        # Pytest-asyncio creates a new loop for each test function if loop_scope=function.
+        # So BUS must be reset per test or use a contextvar?
+        # Or simply, mock_gateway fixture should reset it.
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    def reset(self):
+        self._lock = None
 
 BUS = SharedBus()
 
-# Custom Data Block to simulate different behaviors based on Unit ID
-class MockSparseDataBlock(ModbusSequentialDataBlock):
-    def __init__(self, unit_id):
-        super().__init__(0, [0] * 100)
-        self.unit_id = unit_id
-        self.request_count = 0
-
-    def getValues(self, address, count=1):
-        """Return values with simulated behavior."""
-        return [0] * count
-
+# Custom Contexts for behaviors
 class MockSlaveContext(ModbusSlaveContext):
-    def __init__(self):
-        super().__init__(
-            di=ModbusSequentialDataBlock(0, [0]*100),
-            co=ModbusSequentialDataBlock(0, [0]*100),
-            hr=ModbusSequentialDataBlock(0, [0]*100),
-            ir=ModbusSequentialDataBlock(0, [0]*100),
-            zero_mode=True
-        )
-        self.id6_counter = 0
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
-    # ModbusDeviceContext does not have 'validate' method.
-    # It seems logic moved to Server or base context.
-    # However, getValues is the main entry point for data.
-    # If we want to simulate errors or delays, we should override getValues.
-    # getValues returns data list OR Exception Code.
+    async def async_getValues(self, fc, address, count=1):
+        # Default behavior: Access BUS lock to simulate single wire
+        async with BUS.lock:
+            # Minimal bus time
+            return super().getValues(fc, address, count)
 
-    def getValues(self, fc, address, count=1):
-        return super().getValues(fc, address, count)
-
-# Special Contexts for behaviors
 class TimeoutContext(ModbusSlaveContext):
-    def getValues(self, fc, address, count=1):
-        import time
-        # Simulate BUS blocking
-        # We can't use await here easily because getValues might be sync in some backends,
-        # but pymodbus AsyncTcpServer usually runs in executor or handles sync?
-        # Actually StartAsyncTcpServer runs in loop.
-        # If getValues is blocking (time.sleep), it BLOCKS THE LOOP.
-        # This is EXACTLY what happens on a single-threaded server/gateway.
-        time.sleep(2.0) # Blocking sleep to force client timeout AND block other requests
-        return super().getValues(fc, address, count)
+    async def async_getValues(self, fc, address, count=1):
+        async with BUS.lock:
+            # Hold the bus for 2.0s
+            await asyncio.sleep(2.0)
+            return super().getValues(fc, address, count)
 
 class SlowContext(ModbusSlaveContext):
-    def getValues(self, fc, address, count=1):
-        import time
-        time.sleep(0.2) # Small delay
-        return super().getValues(fc, address, count)
+    async def async_getValues(self, fc, address, count=1):
+        async with BUS.lock:
+            await asyncio.sleep(0.2)
+            return super().getValues(fc, address, count)
 
 class ErrorContext(ModbusSlaveContext):
-    def getValues(self, fc, address, count=1):
-        return None # Should trigger error?
+    async def async_getValues(self, fc, address, count=1):
+        async with BUS.lock:
+            # Return None to trigger server exception/empty response
+            return None
 
 class FlakyContext(ModbusSlaveContext):
-    def __init__(self):
-        super().__init__(hr=ModbusSequentialDataBlock(0, [123]*100))
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.attempt = 0
 
-    def getValues(self, fc, address, count=1):
-        self.attempt += 1
-        if self.attempt % 2 != 0:
-            import time
-            time.sleep(2.0) # Timeout first
-        return super().getValues(fc, address, count)
+    async def async_getValues(self, fc, address, count=1):
+        async with BUS.lock:
+            self.attempt += 1
+            if self.attempt % 2 != 0:
+                await asyncio.sleep(2.0)
+            return super().getValues(fc, address, count)
 
 async def run_server(port=5020):
     # ID 1: Healthy
-    c1 = ModbusSlaveContext(hr=ModbusSequentialDataBlock(0, [1111]*100))
+    c1 = MockSlaveContext(hr=ModbusSequentialDataBlock(0, [1111]*100))
 
     # ID 2: Error (Illegal Address)
-    c2 = ErrorContext(hr=ModbusSequentialDataBlock(0, [2222]*100)) # validate returns False
+    c2 = ErrorContext(hr=ModbusSequentialDataBlock(0, [2222]*100))
 
     # ID 3: Timeout
     c3 = TimeoutContext(hr=ModbusSequentialDataBlock(0, [3333]*100))
 
-    # ID 4: Gateway Error (Using ErrorContext for now as placeholder for 0x0B difficulty)
-    # Getting strict 0x0B from standard pymodbus server is hard without patching.
-    # We will accept 0x02 as "Error Response" for test purposes or mock packet level.
+    # ID 4: Gateway Error
     c4 = ErrorContext(hr=ModbusSequentialDataBlock(0, [4444]*100))
 
     # ID 5: Slow
     c5 = SlowContext(hr=ModbusSequentialDataBlock(0, [5555]*100))
 
     # ID 6: Flaky
-    c6 = FlakyContext()
+    c6 = FlakyContext(hr=ModbusSequentialDataBlock(0, [123]*100))
 
     store = {
         1: c1,
@@ -123,23 +111,13 @@ async def run_server(port=5020):
         6: c6
     }
 
-    # In Pymodbus 3.x, ModbusServerContext arg is often just 'slaves'
-    # But wait, signature is (slaves=None, single=True) usually.
-    # Error said unexpected keyword 'slaves'.
-    # Checking Pymodbus 3 source or doc via trial...
-    # It might be positional only or renamed?
-    # Let's try positional.
     context = ModbusServerContext(store, single=False)
 
     address = ("", port)
     server = await StartAsyncTcpServer(
         context=context,
         address=address,
-        # defer_start=False # removed in v3
     )
-    # Server runs forever in StartAsyncTcpServer?
-    # v3.0: it returns a future or runs forever?
-    # v3.11: StartAsyncTcpServer is a coroutine that runs the server.
     return server
 
 if __name__ == "__main__":
