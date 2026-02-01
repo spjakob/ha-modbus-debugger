@@ -31,17 +31,17 @@ read_register:
     count:
       name: Count
       description: Number of registers to read.
-      required: false
+      required: true
       default: 1
       selector:
         number:
           min: 1
-          max: 125
+          max: 1000
           mode: box
     register_type:
       name: Register Type
       description: Holding or Input Register.
-      required: false
+      required: true
       default: holding
       selector:
         select:
@@ -50,6 +50,27 @@ read_register:
               value: holding
             - label: Input Register
               value: input
+    timeout:
+      name: Timeout
+      description: Timeout in seconds for each request.
+      required: true
+      default: 2.0
+      selector:
+        number:
+          min: 0.1
+          max: 10.0
+          step: 0.1
+          mode: box
+    retries:
+      name: Retries
+      description: Number of retries if connection fails.
+      required: true
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 5
+          mode: box
     verbosity:
       name: Verbose Level
       description: Control the level of detail in the output.
