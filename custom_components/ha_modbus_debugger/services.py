@@ -387,6 +387,13 @@ async def setup_services(hass: HomeAssistant):
 
     hass.services.async_register(
         DOMAIN,
+        SERVICE_READ_REGISTER,
+        handle_read_register,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    hass.services.async_register(
+        DOMAIN,
         SERVICE_SCAN_DEVICES,
         handle_scan_devices,
         supports_response=SupportsResponse.ONLY,
