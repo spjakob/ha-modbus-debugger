@@ -217,7 +217,7 @@ async def setup_services(hass: HomeAssistant):
         # Profile Parsing
         timeout = 0.1
         retries = 0
-        concurrency = 50
+        concurrency = 1 # Default concurrency reduced to 1 for safety
         is_async = True # Affects TCP mostly
 
         if scan_profile == "sync_quick":
