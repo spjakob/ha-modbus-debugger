@@ -77,6 +77,26 @@ async def async_test_scan_devices_service():
     hass.services.async_register = MagicMock()
     hass.services.has_service.return_value = False
 
+    # Mock async_add_executor_job to run the function immediately
+    async def mock_executor(func, *args):
+        # We need to await it if it's async, but scan_tcp is sync in the scanner
+        # BUT in our test we mock scan_tcp as AsyncMock for convenience?
+        # No, scan_tcp is a sync method in the real class, so we should Mock it as sync or handle AsyncMock carefully.
+        # In the patch below, `scanner_instance.scan_tcp = AsyncMock(...)`
+        # If we call an AsyncMock, it returns a coroutine.
+        # But `async_add_executor_job` expects to run a SYNC function in a thread.
+        # If we pass an AsyncMock to it, it returns a coroutine object (not awaited).
+        # We should Mock scan_tcp as a standard MagicMock that returns the value.
+        if asyncio.iscoroutinefunction(func):
+             return await func(*args)
+
+        result = func(*args)
+        if asyncio.iscoroutine(result):
+             return await result
+        return result
+
+    hass.async_add_executor_job = AsyncMock(side_effect=mock_executor)
+
     await setup_services(hass)
 
     handler = None
@@ -109,9 +129,8 @@ async def async_test_scan_devices_service():
     with patch("custom_components.ha_modbus_debugger.services.ModbusScanner") as MockScanner:
         scanner_instance = MockScanner.return_value
 
-        # Mock scan_tcp return value
-        # Device 1: Found, Device 2: Missing (implicit in list)
-        scanner_instance.scan_tcp = AsyncMock(return_value=[
+        # Mock scan_tcp as a SYNC function (MagicMock) because it runs in executor
+        scanner_instance.scan_tcp = MagicMock(return_value=[
             {"unit_id": 1, "register": 0, "value": 123, "hex": "0x007B"}
         ])
 
@@ -125,16 +144,32 @@ async def async_test_scan_devices_service():
         MockScanner.assert_called_with(hub._config)
         scanner_instance.scan_tcp.assert_called_once()
 
+        # Verify defaults (Timeout 1.0, Retries 0)
+        args, kwargs = scanner_instance.scan_tcp.call_args
+        assert abs(args[4] - 1.0) < 0.001
+        assert args[5] == 0
+
 def test_scan_devices_service():
     loop = asyncio.new_event_loop()
     loop.run_until_complete(async_test_scan_devices_service())
     loop.close()
 
-async def async_test_scan_devices_custom_profile_and_logging():
+async def async_test_scan_devices_custom_params_and_logging():
     hass = MagicMock()
     hass.data = {DOMAIN: {}}
     hass.services.async_register = MagicMock()
     hass.services.has_service.return_value = False
+
+    # Mock async_add_executor_job
+    async def mock_executor(func, *args):
+        if asyncio.iscoroutinefunction(func):
+             return await func(*args)
+        result = func(*args)
+        if asyncio.iscoroutine(result):
+             return await result
+        return result
+
+    hass.async_add_executor_job = AsyncMock(side_effect=mock_executor)
 
     await setup_services(hass)
 
@@ -162,11 +197,9 @@ async def async_test_scan_devices_custom_profile_and_logging():
         "end_unit": 2,
         "register": 0,
         "register_type": "holding",
-        # Custom profile
-        "scan_profile": "custom_async",
-        "custom_timeout": 0.5,
-        "custom_retries": 1,
-        "custom_concurrency": 5,
+        # Custom params
+        "timeout": 0.5,
+        "retries": 1,
         # Logging
         "log_to_file": True,
         "verbosity": "debug"
@@ -180,7 +213,8 @@ async def async_test_scan_devices_custom_profile_and_logging():
         mock_logger.level = logging.WARNING
 
         scanner_instance = MockScanner.return_value
-        scanner_instance.scan_tcp = AsyncMock(return_value=[
+        # Sync mock
+        scanner_instance.scan_tcp = MagicMock(return_value=[
              {"unit_id": 1, "register": 0, "value": 123, "hex": "0x007B"}
         ])
 
@@ -204,16 +238,14 @@ async def async_test_scan_devices_custom_profile_and_logging():
                 break
 
         assert start_call is not None
-        # Check arguments: start_unit, end_unit, profile, timeout, retries, est_time
-        # services.py: "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d. Estimated time: %.2fs. (Sequential Sync-in-Executor)"
-        # 6 format args
+        # Check arguments: start_unit, end_unit, timeout, retries, est_time
+        # services.py: "Starting Modbus Scan... Range: %s-%s. Params: Timeout=%.2fs, Retries=%d. Estimated time: %.2fs."
+        # 5 format args (Profile removed)
         log_args = start_call[0][1:]
         assert log_args[0] == 1
         assert log_args[1] == 2
-        assert log_args[2] == "custom_async"
-        assert abs(log_args[3] - 0.5) < 0.001
-        assert log_args[4] == 1
-        # log_args[5] is est_time
+        assert abs(log_args[2] - 0.5) < 0.001 # Timeout
+        assert log_args[3] == 1 # Retries
 
         # Check "Modbus Scan Complete"
         complete_call = None
@@ -224,7 +256,7 @@ async def async_test_scan_devices_custom_profile_and_logging():
         assert complete_call is not None
         assert "scan_duration" in response
 
-def test_scan_devices_custom_profile_and_logging():
+def test_scan_devices_custom_params_and_logging():
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(async_test_scan_devices_custom_profile_and_logging())
+    loop.run_until_complete(async_test_scan_devices_custom_params_and_logging())
     loop.close()

@@ -199,12 +199,9 @@ async def setup_services(hass: HomeAssistant):
         register = call.data.get("register", 0)
         register_type = call.data.get("register_type", "holding")
 
-        scan_profile = call.data.get("scan_profile", "async_quick") # kept for compatibility logic
-        custom_timeout = float(call.data.get("custom_timeout", 3.0))
-        custom_retries = int(call.data.get("custom_retries", 3))
-        # custom_concurrency ignored
+        timeout = float(call.data.get("timeout", 1.0))
+        retries = int(call.data.get("retries", 0))
         log_to_file = call.data.get("log_to_file", False)
-        disable_pymodbus_logging = call.data.get("disable_pymodbus_logging", True)
 
         verbosity = call.data.get("verbosity", "basic")
         show_trace = verbosity in ["detailed", "debug"]
@@ -212,19 +209,6 @@ async def setup_services(hass: HomeAssistant):
 
         trace_log = []
         target_info = f"{hub._config.get('host')}:{hub._config.get('port')}" if 'host' in hub._config else f"{hub._config.get('port')} (Serial)"
-
-        # Profile Parsing
-        timeout = 0.1
-        retries = 0
-        # Concurrency always 1 (Sequential/Serial)
-
-        if scan_profile == "sync_quick":
-            timeout = 0.1
-            retries = 0
-        elif scan_profile in ["custom_async", "custom_sync"]:
-            # Treat async/sync profiles same - user preferences for timeout/retries matter
-            timeout = custom_timeout
-            retries = custom_retries
 
         # Map register type
         reg_type_code = READ_HOLDING_REGISTERS
@@ -237,7 +221,7 @@ async def setup_services(hass: HomeAssistant):
 
         if show_trace:
             trace_log.append(
-                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}. Profile: {scan_profile}"
+                f"Starting scan on {hub._config.get('name')} ({target_info}). Range {start_unit}-{end_unit}."
             )
 
         # Log to file setup
@@ -249,10 +233,9 @@ async def setup_services(hass: HomeAssistant):
                 _LOGGER.setLevel(logging.INFO)
 
             _LOGGER.info(
-                "Starting Modbus Scan... Range: %s-%s, Profile: %s. Params: Timeout=%.2fs, Retries=%d. Estimated time: %.2fs. (Sequential Sync-in-Executor)",
+                "Starting Modbus Scan... Range: %s-%s. Params: Timeout=%.2fs, Retries=%d. Estimated time: %.2fs.",
                 start_unit,
                 end_unit,
-                scan_profile,
                 timeout,
                 retries,
                 est_time

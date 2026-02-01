@@ -43,8 +43,7 @@ class TestModbusScanner(unittest.TestCase):
         }
         self.serial_config = {
             CONF_CONNECTION_TYPE: CONNECTION_TYPE_SERIAL,
-            CONF_PORT: "/dev/ttyUSB0",
-            CONF_CONNECTION_TYPE: CONNECTION_TYPE_SERIAL # Fix key
+            CONF_PORT: "/dev/ttyUSB0"
         }
 
     def test_crc(self):
