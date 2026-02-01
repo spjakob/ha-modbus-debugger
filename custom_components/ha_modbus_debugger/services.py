@@ -142,76 +142,52 @@ async def setup_services(hass: HomeAssistant):
         if show_trace:
             trace_log.append(f"Success. Received {len(registers)} registers.")
 
-        response = {
-            "registers": registers,
-            "hex": [f"0x{r:04X}" for r in registers],
-            "debug_info": f"Read {len(registers)} registers from Unit {unit_id}, Address {register}. Success.",
-        }
-        if show_trace:
-            response["trace"] = trace_log
-
-        # Generate "Table" View for UI
-        # List of objects
+        # Consolidated Table View
         table_data = []
         for i, val in enumerate(registers):
             addr = register + i
-            table_data.append({
+
+            # Base formats
+            row = {
                 "address": addr,
-                "value": val,
+                "int16": struct.unpack(">h", struct.pack(">H", val))[0],
+                "uint16": val,
                 "hex": f"0x{val:04X}",
                 "bin": f"{val:016b}"
-            })
-        response["table"] = table_data
+            }
 
-        # Conversions (Only for first item or logical blocks, but "registers" has raw data)
-
-        response["int16"] = [
-            struct.unpack(">h", struct.pack(">H", r))[0] for r in registers
-        ]
-        response["uint16"] = registers
-
-        # Float16
-        try:
-             response["float16"] = [
-                float(struct.unpack(">e", struct.pack(">H", r))[0]) for r in registers
-            ]
-        except Exception:
-             response["float16"] = []
-
-        # 32-bit (Combine pairs)
-        if len(registers) >= 2:
-            int32_be = []
-            uint32_be = []
-            float32_be = []
-            int32_le = []
-            float32_le = []
-
-            for i in range(0, len(registers) - 1, 2):
-                val_be = (registers[i] << 16) | registers[i + 1]
-                int32_be.append(struct.unpack(">i", struct.pack(">I", val_be))[0])
-                uint32_be.append(val_be)
-                float32_be.append(struct.unpack(">f", struct.pack(">I", val_be))[0])
-
-                val_le = (registers[i + 1] << 16) | registers[i]
-                int32_le.append(struct.unpack(">i", struct.pack(">I", val_le))[0])
-                float32_le.append(struct.unpack(">f", struct.pack(">I", val_le))[0])
-
-            response["int32_be"] = int32_be
-            response["uint32_be"] = uint32_be
-            response["float32_be"] = float32_be
-            response["int32_le_swap"] = int32_le
-            response["float32_le_swap"] = float32_le
-
-        # Char/String
-        chars = ""
-        for r in registers:
-            b = struct.pack(">H", r)
+            # Char
+            b = struct.pack(">H", val)
+            chars = ""
             for byte in b:
-                if 32 <= byte <= 126:
-                    chars += chr(byte)
-                else:
-                    chars += "."
-        response["string"] = chars
+                if 32 <= byte <= 126: chars += chr(byte)
+                else: chars += "."
+            row["char"] = chars
+
+            # 32-bit values (Look ahead to next register)
+            # Only valid if next register exists in the block
+            if i + 1 < len(registers):
+                next_val = registers[i+1]
+
+                # Big Endian: reg[i] << 16 | reg[i+1]
+                val_be = (val << 16) | next_val
+                row["int32_be"] = struct.unpack(">i", struct.pack(">I", val_be))[0]
+                row["uint32_be"] = val_be
+                row["float32_be"] = struct.unpack(">f", struct.pack(">I", val_be))[0]
+
+                # Little Endian Word Swap: reg[i+1] << 16 | reg[i]
+                val_le = (next_val << 16) | val
+                row["int32_le_swap"] = struct.unpack(">i", struct.pack(">I", val_le))[0]
+                row["float32_le_swap"] = struct.unpack(">f", struct.pack(">I", val_le))[0]
+
+            table_data.append(row)
+
+        response = {
+            "debug_info": f"Read {len(registers)} registers from Unit {unit_id}, Address {register}. Success.",
+            "table": table_data
+        }
+        if show_trace:
+            response["trace"] = trace_log
 
         return response
 
