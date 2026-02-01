@@ -2,6 +2,7 @@ import logging
 import socket
 import struct
 import time
+import select
 from typing import Any, Dict, List, Optional
 
 import serial
@@ -230,10 +231,6 @@ class ModbusScanner:
     def read_registers_tcp(self, unit_id: int, register: int, count: int, reg_type: int,
                           timeout: float, retries: int, log_callback=None) -> Dict[str, Any]:
         """Read registers via TCP (Sync)."""
-
-        # Handle chunking if count > 125
-        # Modbus Max PDU size limits count. typically 125.
-
         MAX_COUNT = 125
         if count <= MAX_COUNT:
             # Single request
@@ -270,27 +267,46 @@ class ModbusScanner:
              if log_callback: log_callback(msg)
 
         try:
-             for attempt in range(retries + 1):
-                try:
-                    if sock is None:
-                        _log_debug(f"Connecting to {self.host}:{self.port}...")
-                        sock = socket.create_connection((self.host, self.port), timeout=timeout)
-                        _log_debug("Connected.")
+            # Connect once
+            _log_debug(f"Connecting to {self.host}:{self.port}...")
+            sock = socket.create_connection((self.host, self.port), timeout=timeout)
+            _log_debug("Connected.")
 
-                    _log_debug(f"Sending request: Unit {unit_id}, Addr {register}, Count {count}")
+            for attempt in range(retries + 1):
+                try:
+                    # Check for Ghost Data
+                    r, _, _ = select.select([sock], [], [], 0)
+                    if r:
+                        ghost = sock.recv(1024)
+                        _log_debug(f"Unit {unit_id}: WARNING - Ghost data cleared before sending: {ghost.hex()}")
+
+                    req_start_time = time.perf_counter()
+                    # _log_debug(f"Sending request: Unit {unit_id}, Addr {register}, Count {count}")
                     response = self._perform_tcp_request_sync(sock, unit_id, register, count, reg_type, timeout)
-                    _log_debug(f"Response received. Data: {response.hex()}")
+                    elapsed = time.perf_counter() - req_start_time
+                    _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
 
                     parsed = self._parse_response_packet(b'', response, unit_id)
                     return parsed
 
                 except (OSError, socket.timeout, EOFError) as e:
+                    elapsed = time.perf_counter() - req_start_time
                     last_error = str(e)
-                    _log_debug(f"Error: {e}")
-                    if sock:
-                        sock.close()
-                        sock = None
+                    err_str = "Error"
+                    if isinstance(e, socket.timeout):
+                         err_str = "Timeout"
+                    _log_debug(f"Unit {unit_id}: {err_str} ({elapsed:.2f}s) - {e}")
+
+                    # On fatal errors (not just timeout), maybe we should reconnect?
+                    # For a single block read, if we fail, we fail. Retries handle it.
+                    # If socket is broken, we must reconnect.
+                    if not isinstance(e, socket.timeout):
+                         if sock: sock.close()
+                         sock = socket.create_connection((self.host, self.port), timeout=timeout)
                     continue
+        except Exception as e:
+             last_error = str(e)
+             _log_debug(f"Connection Error: {e}")
         finally:
             if sock:
                 sock.close()
@@ -301,7 +317,6 @@ class ModbusScanner:
     def read_registers_serial(self, unit_id: int, register: int, count: int, reg_type: int,
                               timeout: float, retries: int, log_callback=None) -> Dict[str, Any]:
         """Read registers via Serial (Sync)."""
-
         MAX_COUNT = 125
         if count <= MAX_COUNT:
             return self._read_block_serial(unit_id, register, count, reg_type, timeout, retries, log_callback)
@@ -351,26 +366,33 @@ class ModbusScanner:
 
             for attempt in range(retries + 1):
                 try:
-                    _log_debug(f"Sending request: Unit {unit_id}, Addr {register}, Count {count}")
-                    response = self._perform_serial_request_sync(ser, unit_id, register, count, reg_type, timeout)
-                    _log_debug(f"Response received. Data: {response.hex()}")
+                    # Check for Ghost Data
+                    if ser.in_waiting > 0:
+                        ghost = ser.read(ser.in_waiting)
+                        _log_debug(f"Unit {unit_id}: WARNING - Ghost data cleared before sending: {ghost.hex()}")
 
-                    # Request packet needed for RTU CRC check?
-                    # Yes, parse_response calls _calculate_crc on request+response? No, it calculates CRC on response only (validating strict integrity).
-                    # Actually _parse_response_packet ignores request_packet argument in the implementation above!
-                    # "def _parse_response_packet(self, request_packet: bytes, response_data: bytes, unit_id: int) -> Dict[str, Any]:"
-                    # But wait, in the existing implementation:
-                    # "parsed = self._parse_response_packet(req, response, unit_id)"
-                    # And:
-                    # "parsed = self._parse_response_packet(b'', response, unit_id)"
-                    # The current implementation of _parse_response_packet DOES NOT use request_packet.
+                    req_start_time = time.perf_counter()
+                    # _log_debug(f"Sending request: Unit {unit_id}, Addr {register}, Count {count}")
+                    response = self._perform_serial_request_sync(ser, unit_id, register, count, reg_type, timeout)
+
+                    elapsed = time.perf_counter() - req_start_time
+                    if len(response) == 0:
+                         _log_debug(f"Unit {unit_id}: Timeout ({elapsed:.2f}s)")
+                         raise socket.timeout("Timeout") # Simulate timeout for retry logic
+
+                    _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
 
                     parsed = self._parse_response_packet(b'', response, unit_id)
                     return parsed
 
                 except Exception as e:
+                    elapsed = time.perf_counter() - req_start_time
                     last_error = str(e)
-                    _log_debug(f"Error: {e}")
+                    err_str = "Error"
+                    if "Timeout" in str(e): # Pyserial doesn't raise Timeout explicitly usually
+                         err_str = "Timeout"
+                    _log_debug(f"Unit {unit_id}: {err_str} ({elapsed:.2f}s) - {e}")
+
                     ser.reset_input_buffer()
                     continue
 
@@ -381,7 +403,7 @@ class ModbusScanner:
 
     def scan_tcp(self, start_unit: int, end_unit: int, register: int, reg_type: int,
                        timeout: float, retries: int, update_callback=None, log_callback=None) -> List[Dict]:
-        """Run a TCP Scan (Sync/Blocking)."""
+        """Run a TCP Scan (Sync/Blocking) with Persistent Connection."""
         results = []
 
         def _log_debug(msg):
@@ -389,21 +411,33 @@ class ModbusScanner:
 
         sock = None
         try:
+            _log_debug(f"Connecting to {self.host}:{self.port}...")
+            try:
+                sock = socket.create_connection((self.host, self.port), timeout=timeout)
+                _log_debug("Connected.")
+            except Exception as e:
+                _log_debug(f"Connection Failed: {e}")
+                return [{"error": str(e)}]
+
             for unit_id in range(start_unit, end_unit + 1):
                 success = False
                 for attempt in range(retries + 1):
                     req_start_time = time.perf_counter()
                     try:
+                        # Reconnect if we lost it (e.g. fatal error previously)
                         if sock is None:
-                            _log_debug(f"Connecting to {self.host}:{self.port}...")
                             try:
                                 sock = socket.create_connection((self.host, self.port), timeout=timeout)
-                                _log_debug("Connected.")
                             except Exception as e:
-                                # ... error handling ...
-                                raise e
+                                _log_debug(f"Unit {unit_id}: Connection Failed - {e}")
+                                break # Skip this unit
 
-                        _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
+                        # Check for Ghost Data
+                        r, _, _ = select.select([sock], [], [], 0)
+                        if r:
+                            ghost = sock.recv(1024)
+                            _log_debug(f"Unit {unit_id}: WARNING - Ghost data cleared before sending: {ghost.hex()}")
+
                         response = self._perform_tcp_request_sync(sock, unit_id, register, 1, reg_type, timeout)
                         elapsed = time.perf_counter() - req_start_time
                         _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
@@ -424,7 +458,6 @@ class ModbusScanner:
                         # ... other cases ...
                         elif "error" in parsed:
                              _log_debug(f"Parsing Error Unit {unit_id}: {parsed['error']}")
-                             # If we got a valid MODBUS EXCEPTION, it is a success (device found)
                              if "exception_code" in parsed:
                                  res = {
                                      "unit_id": unit_id,
@@ -439,14 +472,32 @@ class ModbusScanner:
                              continue
 
                     except (OSError, socket.timeout, EOFError) as e:
-                        if sock:
-                            sock.close()
-                            sock = None
-                        _log_debug(f"Unit {unit_id}: {e}")
+                        elapsed = time.perf_counter() - req_start_time
+
+                        err_str = "Error"
+                        if isinstance(e, socket.timeout):
+                            err_str = "Timeout"
+                            # Keep socket open on timeout
+                        else:
+                            # Fatal error, close and set to None to trigger reconnect next loop
+                            if sock:
+                                sock.close()
+                                sock = None
+
+                        if not success and attempt == retries:
+                             _log_debug(f"Unit {unit_id}: {err_str} ({elapsed:.2f}s)")
+                        else:
+                             # Log retry if we are going to retry? Or just log error
+                             # User said "Consolidate... combine them into one clear status"
+                             # If we retry, maybe we shouldn't log every failure if it eventually succeeds?
+                             # But this is a debugger. Logging every attempt is good.
+                             _log_debug(f"Unit {unit_id}: {err_str} ({elapsed:.2f}s) - {e}")
+
                         continue
 
-                if not success:
-                     _log_debug(f"Unit {unit_id}: No Response")
+                # if not success:
+                #      _log_debug(f"Unit {unit_id}: No Response")
+                # Removed redundant log as requested ("Consolidate")
 
         finally:
             if sock:
@@ -456,12 +507,13 @@ class ModbusScanner:
 
     def scan_serial(self, start_unit: int, end_unit: int, register: int, reg_type: int,
                     timeout: float, retries: int, update_callback=None, log_callback=None) -> List[Dict]:
-        """Run a Serial Scan (Blocking/Sync)."""
+        """Run a Serial Scan (Blocking/Sync) with Persistent Connection."""
         results = []
 
         def _log_debug(msg):
              if log_callback: log_callback(msg)
 
+        ser = None
         try:
             ser = serial.Serial(
                 port=self.port,
@@ -472,6 +524,7 @@ class ModbusScanner:
                 timeout=timeout
             )
         except Exception as e:
+            _log_debug(f"Failed to open port: {e}")
             return [{"error": f"Failed to open port: {e}"}]
 
         try:
@@ -483,15 +536,20 @@ class ModbusScanner:
                 for attempt in range(retries + 1):
                     req_start_time = time.perf_counter()
                     try:
-                        _log_debug(f"Sending request to Unit {unit_id} (Attempt {attempt+1}/{retries+1})")
+                        # Check Ghost Data
+                        if ser.in_waiting > 0:
+                            ghost = ser.read(ser.in_waiting)
+                            _log_debug(f"Unit {unit_id}: WARNING - Ghost data cleared before sending: {ghost.hex()}")
+
                         response = self._perform_serial_request_sync(ser, unit_id, register, 1, reg_type, timeout)
+
+                        elapsed = time.perf_counter() - req_start_time
 
                         # Validate length roughly
                         if len(response) < 5:
-                            _log_debug(f"Unit {unit_id}: Incomplete/Timeout")
+                            _log_debug(f"Unit {unit_id}: Timeout ({elapsed:.2f}s)")
                             continue
 
-                        elapsed = time.perf_counter() - req_start_time
                         _log_debug(f"Unit {unit_id}: Response ({elapsed:.2f}s) Data: {response.hex()}")
 
                         parsed = self._parse_response_packet(b'', response, unit_id)
@@ -520,15 +578,16 @@ class ModbusScanner:
                             break
                         # ...
                     except Exception as e:
-                        _log_debug(f"Serial scan error unit {unit_id}: {e}")
+                        elapsed = time.perf_counter() - req_start_time
+                        _log_debug(f"Unit {unit_id}: Error ({elapsed:.2f}s) - {e}")
                         ser.reset_input_buffer()
                         continue
 
-                if not success:
-                     _log_debug(f"Unit {unit_id}: No Response")
+                # if not success:
+                #      _log_debug(f"Unit {unit_id}: No Response") # Consolidated
 
         finally:
-            if ser.is_open:
+            if ser and ser.is_open:
                 ser.close()
 
         return results
