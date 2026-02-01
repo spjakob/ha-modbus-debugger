@@ -39,7 +39,10 @@ async def async_test_read_register_service():
     hub = MagicMock(spec=ModbusHub)
     hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
     hub._connection_type = "tcp"
-    hub.connect = AsyncMock(return_value=True)
+    # Ensure connect/read methods are NOT called
+    hub.connect = AsyncMock()
+    hub.read_holding_registers = AsyncMock()
+    hub.read_input_registers = AsyncMock()
     hub._lock = asyncio.Lock()
 
     hass.data[DOMAIN]["hub_id"] = hub
@@ -66,6 +69,11 @@ async def async_test_read_register_service():
         })
 
         response = await handler(call)
+
+        # Assert ModbusHub methods were NOT called
+        hub.connect.assert_not_called()
+        hub.read_holding_registers.assert_not_called()
+        hub.read_input_registers.assert_not_called()
 
         assert response["registers"] == [0x1234]
         assert response["hex"] == ["0x1234"]
@@ -95,6 +103,11 @@ async def async_test_read_register_service():
         })
 
         response = await handler(call)
+
+        # Assert ModbusHub methods were NOT called
+        hub.connect.assert_not_called()
+        hub.read_holding_registers.assert_not_called()
+        hub.read_input_registers.assert_not_called()
 
         assert len(response["registers"]) == 2
         assert response["uint32_be"] == [65538]
@@ -138,7 +151,8 @@ async def async_test_scan_devices_service():
     hub = MagicMock(spec=ModbusHub)
     hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
     hub._connection_type = "tcp"
-    hub.connect = AsyncMock(return_value=True)
+    # Ensure hub not used for scan logic
+    hub.connect = AsyncMock()
     hub._lock = asyncio.Lock()
     
     hass.data[DOMAIN]["hub_id"] = hub
@@ -159,6 +173,9 @@ async def async_test_scan_devices_service():
         ])
 
         response = await handler(call)
+
+        # Assert hub not connected (scan creates own socket)
+        hub.connect.assert_not_called()
 
         assert response["count"] == 1
         assert response["found_devices"][0]["unit_id"] == 1
@@ -207,7 +224,7 @@ async def async_test_scan_devices_custom_params_and_logging():
     hub = MagicMock(spec=ModbusHub)
     hub._config = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
     hub._connection_type = "tcp"
-    hub.connect = AsyncMock(return_value=True)
+    hub.connect = AsyncMock()
     hub._lock = asyncio.Lock()
 
     hass.data[DOMAIN]["hub_id"] = hub
