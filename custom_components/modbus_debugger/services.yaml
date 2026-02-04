@@ -3,14 +3,14 @@ read_register:
   description: Reads a register from a Modbus device and displays the value in multiple formats.
   fields:
     hub_id:
-      name: Hub ID
+      name: Modbus Hub
       description: The Modbus Hub to use.
-      required: true
+      required: false
       selector:
         config_entry:
           integration: modbus_debugger
     unit_id:
-      name: Unit ID
+      name: Modbus Address
       description: The Modbus Slave ID.
       required: true
       default: 1
@@ -109,9 +109,9 @@ scan_devices:
   description: Scans the bus for Modbus devices by attempting to read a register from each Unit ID.
   fields:
     hub_id:
-      name: Hub ID
+      name: Modbus Hub
       description: The Modbus Hub to use.
-      required: true
+      required: false
       selector:
         config_entry:
           integration: modbus_debugger
@@ -205,11 +205,12 @@ stress_test_device:
   description: Performs a stress test by repeatedly reading a register range.
   fields:
     hub_id:
-      name: Hub ID
-      required: true
+      name: Modbus Hub
+      description: The Modbus Hub to use.
+      required: false
       selector: { config_entry: { integration: modbus_debugger } }
     unit_id:
-      name: Unit ID
+      name: Modbus Address
       required: true
       default: 1
       selector: { number: { min: 1, max: 247, mode: box } }

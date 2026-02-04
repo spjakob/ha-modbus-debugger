@@ -27,6 +27,7 @@ from .const import (
     DEFAULT_BAUDRATE,
     DEFAULT_TIMEOUT,
     CONF_RTU_OVER_TCP,
+    CONF_IS_DEFAULT,
 )
 
 
@@ -70,6 +71,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
                         vol.Optional(CONF_RTU_OVER_TCP, default=False): bool,
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
+                        vol.Optional(CONF_IS_DEFAULT, default=False): bool,
                     }
                 ),
             )
@@ -100,6 +102,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             ["8N1", "8E1", "8O1", "8N2", "7E1", "7O1"]
                         ),
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
+                        vol.Optional(CONF_IS_DEFAULT, default=False): bool,
                     }
                 ),
             )
@@ -167,12 +170,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         current_port = self._config_entry.data.get(CONF_PORT)
         current_timeout = self._config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+        current_is_default = self._config_entry.data.get(CONF_IS_DEFAULT, False)
 
         if connection_type == CONNECTION_TYPE_SERIAL:
             schema = vol.Schema(
                 {
                     vol.Required(CONF_PORT, default=current_port): str,
                     vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
+                    vol.Optional(CONF_IS_DEFAULT, default=current_is_default): bool,
                 }
             )
         else:
@@ -182,6 +187,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required(CONF_HOST, default=current_host): str,
                     vol.Required(CONF_PORT, default=current_port): int,
                     vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
+                    vol.Optional(CONF_IS_DEFAULT, default=current_is_default): bool,
                 }
             )
 
