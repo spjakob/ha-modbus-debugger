@@ -14,7 +14,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def _run_read_sync(
     config_data,
-    unit_id,
+    slave_id,
     register,
     count,
     reg_type_code,
@@ -56,7 +56,7 @@ def _run_read_sync(
             req_data = struct.pack(">HH", current_addr, chunk_size)
 
             try:
-                resp = client.execute(unit_id, reg_type_code, req_data)
+                resp = client.execute(slave_id, reg_type_code, req_data)
 
                 # Response to Read Holding (03) / Input (04) starts with Byte Count (1 byte)
                 if len(resp) < 1:
@@ -92,7 +92,7 @@ def _run_read_sync(
         )
 
         return {
-            "debug_info": f"Read {len(all_registers)} registers from Unit {unit_id}, Address {register}. Success.",
+            "debug_info": f"Read {len(all_registers)} registers from Slave {slave_id}, Address {register}. Success.",
             "table": table,
             "trace": trace.get_trace(),
         }
@@ -110,7 +110,7 @@ async def read_register(hass: HomeAssistant, call: ServiceCall) -> ServiceRespon
     hub_id = call.data.get("hub_id")
     entry = get_config_entry(hass, hub_id)
 
-    unit_id = call.data.get("unit_id", 1)
+    slave_id = call.data.get("slave_id", 1)
     register = call.data.get("register")
     count = call.data.get("count", 1)
     register_type = call.data.get("register_type", "holding")
@@ -123,7 +123,7 @@ async def read_register(hass: HomeAssistant, call: ServiceCall) -> ServiceRespon
     return await hass.async_add_executor_job(
         _run_read_sync,
         entry.data,
-        unit_id,
+        slave_id,
         register,
         count,
         reg_type_code,
