@@ -25,8 +25,8 @@ _LOGGER = logging.getLogger(__name__)
 class LateResponse:
     """Represents a response that arrived late (matching a previous request)."""
 
-    def __init__(self, unit_id, function_code, data):
-        self.unit_id = unit_id
+    def __init__(self, slave_id, function_code, data):
+        self.slave_id = slave_id
         self.function_code = function_code
         self.data = data
 
@@ -115,7 +115,7 @@ class SyncModbusClient:
             self._serial = None
 
     def execute(
-        self, unit_id: int, function_code: int, data: bytes
+        self, slave_id: int, function_code: int, data: bytes
     ) -> bytes | LateResponse:
         """Execute a Modbus Request with Smart Drain and Late Recovery."""
         if not self._socket and not self._serial:
@@ -133,10 +133,10 @@ class SyncModbusClient:
 
         # 2. Build Request
         if self.connection_type == "tcp" and not self.rtu_over_tcp:
-            req = build_tcp_request(self._transaction_id, unit_id, function_code, data)
+            req = build_tcp_request(self._transaction_id, slave_id, function_code, data)
         else:
             # Serial or RTU-over-TCP
-            req = build_rtu_request(unit_id, function_code, data)
+            req = build_rtu_request(slave_id, function_code, data)
 
         # 3. Send
         if self.trace_callback:
@@ -154,8 +154,8 @@ class SyncModbusClient:
             raise ModbusConnectionError(f"Send failed: {e}")
 
         # 4. Read Loop (Late Recovery)
-        # We loop until we get a response for OUR unit_id, or timeout.
-        # If we get a response for another unit_id, we store it and keep waiting.
+        # We loop until we get a response for OUR slave_id, or timeout.
+        # If we get a response for another slave_id, we store it and keep waiting.
 
         while (time.monotonic() - start_time) < self.timeout:
             remaining_time = self.timeout - (time.monotonic() - start_time)
@@ -176,7 +176,7 @@ class SyncModbusClient:
                     self.trace_callback(f"RX: {raw_frame.hex().upper()}")
 
                 # Check match
-                if resp_unit == unit_id:
+                if resp_unit == slave_id:
                     # Verify FC if needed (optional, but good practice)
                     # Note: Error responses have MSB set
                     if (resp_fc & 0x7F) == (function_code & 0x7F):
@@ -192,7 +192,7 @@ class SyncModbusClient:
                         return resp_data  # Protocol parser handles exception codes
 
                 # Mismatch - Late Response?
-                msg = f"Ghost Data Detected: Expected ID {unit_id}, got ID {resp_unit}"
+                msg = f"Ghost Data Detected: Expected ID {slave_id}, got ID {resp_unit}"
                 _LOGGER.warning(msg)
                 if self.trace_callback:
                     self.trace_callback(msg)
@@ -217,7 +217,7 @@ class SyncModbusClient:
                 raise ModbusConnectionError(f"Read failed: {e}")
 
         raise ModbusTimeoutError(
-            f"No response from Unit {unit_id} within {self.timeout}s"
+            f"No response from Slave {slave_id} within {self.timeout}s"
         )
 
     def _drain_input(self) -> bytes:
@@ -254,16 +254,16 @@ class SyncModbusClient:
         tid, pid, length = parse_mbap_header(mbap)
 
         # 2. Read Body (Length bytes)
-        # Body starts with Unit ID (1 byte), then PDU
+        # Body starts with Slave ID (1 byte), then PDU
         if length < 1:
             raise ModbusInvalidResponseError("Invalid packet length")
 
         body = self._recv_n(length)
-        unit_id = body[0]
+        slave_id = body[0]
         pdu = body[1:]
 
         fc, data = parse_response_pdu(pdu)
-        return unit_id, fc, data, (mbap + body)
+        return slave_id, fc, data, (mbap + body)
 
     def _read_packet_rtu(self, timeout: float) -> tuple[int, int, bytes, bytes]:
         """Read a full Modbus RTU packet."""
@@ -286,7 +286,7 @@ class SyncModbusClient:
 
         # 1. Read Address (1 byte)
         addr_byte = self._recv_rtu_n(1, reader)
-        unit_id = addr_byte[0]
+        slave_id = addr_byte[0]
 
         # 2. Read FC (1 byte)
         fc_byte = self._recv_rtu_n(1, reader)
@@ -329,7 +329,7 @@ class SyncModbusClient:
         # Parse PDU (Strip CRC)
         pdu = full_frame[1:-2]  # Skip Unit, drop CRC
         fc_out, data_out = parse_response_pdu(pdu)
-        return unit_id, fc_out, data_out, full_frame
+        return slave_id, fc_out, data_out, full_frame
 
     def _recv_n(self, n: int) -> bytes:
         """Helper to recv exactly n bytes from TCP socket."""

@@ -12,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _run_stress_sync(
-    config_data, unit_id, register, count, reg_type_code, iterations, timeout, retries
+    config_data, slave_id, register, count, reg_type_code, iterations, timeout, retries
 ):
     trace = TraceLogger()
     target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
@@ -29,13 +29,19 @@ def _run_stress_sync(
         client.connect()
         for i in range(iterations):
             start_time = time.monotonic()
+
+            # Check for Late Responses (Ghost Data)
+            while client._late_responses:
+                lr = client._late_responses.pop(0)
+                trace.log(f"Slave {lr.slave_id}: Late Recovery (Ghost Data)!")
+
             remaining = count
             current_addr = register
             try:
                 while remaining > 0:
                     chunk_size = min(remaining, MAX_CHUNK)
                     req_data = struct.pack(">HH", current_addr, chunk_size)
-                    client.execute(unit_id, reg_type_code, req_data)
+                    client.execute(slave_id, reg_type_code, req_data)
                     remaining -= chunk_size
                     current_addr += chunk_size
 
@@ -78,7 +84,7 @@ async def stress_test(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
     return await hass.async_add_executor_job(
         _run_stress_sync,
         entry.data,
-        call.data.get("unit_id", 1),
+        call.data.get("slave_id", 1),
         call.data.get("register", 0),
         call.data.get("count", 1),
         3 if call.data.get("register_type", "holding") == "holding" else 4,

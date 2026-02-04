@@ -18,28 +18,28 @@ def compute_crc(data: bytes) -> int:
     return crc
 
 
-def build_rtu_request(unit_id: int, function_code: int, data: bytes) -> bytes:
+def build_rtu_request(slave_id: int, function_code: int, data: bytes) -> bytes:
     """Build a Modbus RTU request frame."""
-    packet = struct.pack(">B", unit_id) + struct.pack(">B", function_code) + data
+    packet = struct.pack(">B", slave_id) + struct.pack(">B", function_code) + data
     crc = compute_crc(packet)
     # CRC is Little Endian in Modbus
     return packet + struct.pack("<H", crc)
 
 
 def build_tcp_request(
-    transaction_id: int, unit_id: int, function_code: int, data: bytes
+    transaction_id: int, slave_id: int, function_code: int, data: bytes
 ) -> bytes:
     """Build a Modbus TCP request frame."""
     # Transaction ID (2 bytes)
     # Protocol ID (2 bytes, 0 for Modbus)
-    # Length (2 bytes, Unit ID + Func + Data)
-    # Unit ID (1 byte)
+    # Length (2 bytes, Slave ID + Func + Data)
+    # Slave ID (1 byte)
     # Func (1 byte)
     # Data (N bytes)
 
-    length = 1 + 1 + len(data)  # Unit ID + Func + Data
+    length = 1 + 1 + len(data)  # Slave ID + Func + Data
     header = struct.pack(">HHH", transaction_id, 0, length)
-    body = struct.pack(">BB", unit_id, function_code) + data
+    body = struct.pack(">BB", slave_id, function_code) + data
     return header + body
 
 

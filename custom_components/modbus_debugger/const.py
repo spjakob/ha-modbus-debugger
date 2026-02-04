@@ -12,6 +12,7 @@ CONF_BYTESIZE = "bytesize"
 CONF_METHOD = "method"
 CONF_TIMEOUT = "timeout"
 CONF_NAME = "name"
+CONF_IS_DEFAULT = "is_default"
 
 CONNECTION_TYPE_TCP = "tcp"
 CONNECTION_TYPE_SERIAL = "serial"
@@ -24,7 +25,7 @@ DEFAULT_STOPBITS = 1
 DEFAULT_TIMEOUT = 3
 
 # For Options Flow (Sensors)
-CONF_UNIT_ID = "unit_id"
+CONF_SLAVE_ID = "slave_id"
 CONF_REGISTER = "register"
 CONF_COUNT = "count"
 CONF_DATA_TYPE = "data_type"

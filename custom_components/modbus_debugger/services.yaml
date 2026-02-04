@@ -3,14 +3,14 @@ read_register:
   description: Reads a register from a Modbus device and displays the value in multiple formats.
   fields:
     hub_id:
-      name: Hub ID
+      name: Modbus Hub
       description: The Modbus Hub to use.
-      required: true
+      required: false
       selector:
         config_entry:
           integration: modbus_debugger
-    unit_id:
-      name: Unit ID
+    slave_id:
+      name: Modbus Address
       description: The Modbus Slave ID.
       required: true
       default: 1
@@ -106,18 +106,18 @@ read_register:
 
 scan_devices:
   name: Scan for Devices
-  description: Scans the bus for Modbus devices by attempting to read a register from each Unit ID.
+  description: Scans the bus for Modbus devices by attempting to read a register from each Slave ID.
   fields:
     hub_id:
-      name: Hub ID
+      name: Modbus Hub
       description: The Modbus Hub to use.
-      required: true
+      required: false
       selector:
         config_entry:
           integration: modbus_debugger
-    start_unit:
-      name: Start Unit ID
-      description: The Unit ID to start scanning from.
+    start_slave:
+      name: Start Slave ID
+      description: The Slave ID to start scanning from.
       required: true
       default: 1
       selector:
@@ -125,9 +125,9 @@ scan_devices:
           min: 1
           max: 247
           mode: box
-    end_unit:
-      name: End Unit ID
-      description: The Unit ID to end scanning at.
+    end_slave:
+      name: End Slave ID
+      description: The Slave ID to end scanning at.
       required: true
       default: 10
       selector:
@@ -170,7 +170,7 @@ scan_devices:
           mode: box
     retries:
       name: Retries
-      description: Number of retries per unit ID if connection fails.
+      description: Number of retries per slave ID if connection fails.
       required: true
       default: 0
       selector:
@@ -205,11 +205,11 @@ stress_test_device:
   description: Performs a stress test by repeatedly reading a register range.
   fields:
     hub_id:
-      name: Hub ID
-      required: true
+      name: Modbus Hub
+      required: false
       selector: { config_entry: { integration: modbus_debugger } }
-    unit_id:
-      name: Unit ID
+    slave_id:
+      name: Modbus Address
       required: true
       default: 1
       selector: { number: { min: 1, max: 247, mode: box } }

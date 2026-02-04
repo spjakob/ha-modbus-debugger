@@ -34,16 +34,6 @@ def check_silent_gateway(
     return None
 
 
-def check_hard_timeout(trace: list, timeout: float) -> str | None:
-    """Check if multiple Hard Timeouts occurred."""
-    # Count timeouts that match the configured timeout duration
-    # This implies we waited the full duration and got nothing (vs a quick Connection Refused)
-
-    # We'll need to parse the trace in the Action logic to call this, or pass stats.
-    # For now, let's keep it simple.
-    pass
-
-
 def check_ghost_data(ghost_count: int, timeout: float) -> str | None:
     """Check if ghost data was detected."""
     if ghost_count > 0:

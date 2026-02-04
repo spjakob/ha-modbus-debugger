@@ -9,7 +9,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
-import homeassistant.helpers.config_validation as cv
 
 from .const import (
     DOMAIN,
@@ -27,20 +26,8 @@ from .const import (
     DEFAULT_PORT,
     DEFAULT_BAUDRATE,
     DEFAULT_TIMEOUT,
-    CONF_SENSORS,
-    CONF_UNIT_ID,
-    CONF_REGISTER,
-    CONF_COUNT,
-    CONF_DATA_TYPE,
-    CONF_SCAN_INTERVAL,
     CONF_RTU_OVER_TCP,
-    DATA_TYPE_INT16,
-    DATA_TYPE_UINT16,
-    DATA_TYPE_INT32,
-    DATA_TYPE_UINT32,
-    DATA_TYPE_FLOAT16,
-    DATA_TYPE_FLOAT32,
-    DATA_TYPE_STRING,
+    CONF_IS_DEFAULT,
 )
 
 
@@ -84,6 +71,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         vol.Required(CONF_PORT, default=DEFAULT_PORT): int,
                         vol.Optional(CONF_RTU_OVER_TCP, default=False): bool,
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
+                        vol.Optional(CONF_IS_DEFAULT, default=False): bool,
                     }
                 ),
             )
@@ -114,6 +102,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             ["8N1", "8E1", "8O1", "8N2", "7E1", "7O1"]
                         ),
                         vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): int,
+                        vol.Optional(CONF_IS_DEFAULT, default=False): bool,
                     }
                 ),
             )
@@ -158,82 +147,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_menu(
             step_id="menu",
             menu_options=[
-                "add_sensor",
-                "remove_sensor",
-                "list_sensors",
                 "edit_connection",
             ],
-        )
-
-    async def async_step_add_sensor(self, user_input=None):
-        """Add a sensor."""
-        if user_input is not None:
-            sensors = self._config_entry.options.get(CONF_SENSORS, []).copy()
-            sensors.append(user_input)
-            return self.async_create_entry(title="", data={CONF_SENSORS: sensors})
-
-        return self.async_show_form(
-            step_id="add_sensor",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_NAME): str,
-                    vol.Required(CONF_UNIT_ID, default=1): int,
-                    vol.Required(CONF_REGISTER): int,
-                    vol.Optional(CONF_COUNT, default=1): int,
-                    vol.Required(CONF_DATA_TYPE, default=DATA_TYPE_INT16): vol.In(
-                        [
-                            DATA_TYPE_INT16,
-                            DATA_TYPE_UINT16,
-                            DATA_TYPE_INT32,
-                            DATA_TYPE_UINT32,
-                            DATA_TYPE_FLOAT16,
-                            DATA_TYPE_FLOAT32,
-                            DATA_TYPE_STRING,
-                        ]
-                    ),
-                    vol.Optional(CONF_SCAN_INTERVAL, default=30): int,
-                }
-            ),
-        )
-
-    async def async_step_remove_sensor(self, user_input=None):
-        """Remove a sensor."""
-        sensors = self._config_entry.options.get(CONF_SENSORS, [])
-        if not sensors:
-            return await self.async_step_menu()
-
-        if user_input is not None:
-            # user_input['sensors'] is a list of strings (names) to remove
-            to_remove = user_input.get("sensors", [])
-            new_sensors = [s for s in sensors if s[CONF_NAME] not in to_remove]
-            return self.async_create_entry(title="", data={CONF_SENSORS: new_sensors})
-
-        # List of sensor names
-        sensor_names = [s[CONF_NAME] for s in sensors]
-
-        return self.async_show_form(
-            step_id="remove_sensor",
-            data_schema=vol.Schema(
-                {vol.Optional("sensors"): cv.multi_select(sensor_names)}
-            ),
-        )
-
-    async def async_step_list_sensors(self, user_input=None):
-        """List configured sensors."""
-        sensors = self._config_entry.options.get(CONF_SENSORS, [])
-        sensor_list = "\n".join(
-            [
-                f"- **{s[CONF_NAME]}**: Unit {s[CONF_UNIT_ID]}, Reg {s[CONF_REGISTER]}"
-                for s in sensors
-            ]
-        )
-        if not sensor_list:
-            sensor_list = "No sensors configured."
-
-        return self.async_show_form(
-            step_id="list_sensors",
-            description_placeholders={"sensor_list": sensor_list},
-            last_step=False,
         )
 
     async def async_step_edit_connection(self, user_input=None):
@@ -255,12 +170,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         current_port = self._config_entry.data.get(CONF_PORT)
         current_timeout = self._config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+        current_is_default = self._config_entry.data.get(CONF_IS_DEFAULT, False)
 
         if connection_type == CONNECTION_TYPE_SERIAL:
             schema = vol.Schema(
                 {
                     vol.Required(CONF_PORT, default=current_port): str,
                     vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
+                    vol.Optional(CONF_IS_DEFAULT, default=current_is_default): bool,
                 }
             )
         else:
@@ -270,6 +187,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required(CONF_HOST, default=current_host): str,
                     vol.Required(CONF_PORT, default=current_port): int,
                     vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
+                    vol.Optional(CONF_IS_DEFAULT, default=current_is_default): bool,
                 }
             )
 

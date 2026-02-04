@@ -27,11 +27,11 @@ async def test_late_response_recovery_mocked():
         )
 
         # Should find both 107 (from execute) and 101 (from late_responses)
-        units = [d["unit_id"] for d in result["found_devices"]]
+        units = [d["slave_id"] for d in result["found_devices"]]
         assert 107 in units
         assert 101 in units
         assert any(
-            "Late Recovery" in str(d.get("value"))
+            "Late Recovery" in str(d.get("note", ""))
             for d in result["found_devices"]
-            if d["unit_id"] == 101
+            if d["slave_id"] == 101
         )

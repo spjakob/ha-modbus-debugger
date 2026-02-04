@@ -24,8 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 
 def _run_scan_sync(
     config_data,
-    start_unit,
-    end_unit,
+    start_slave,
+    end_slave,
     register,
     reg_type_code,
     timeout,
@@ -66,7 +66,7 @@ def _run_scan_sync(
 
     target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
     log(
-        f"Starting scan on {config_data.get('name')} ({target}). Range {start_unit}-{end_unit}.",
+        f"Starting scan on {config_data.get('name')} ({target}). Range {start_slave}-{end_slave}.",
         level="info",
     )
 
@@ -102,20 +102,30 @@ def _run_scan_sync(
         fc = reg_type_code
         req_data = struct.pack(">HH", register, 1)  # Read 1 register at 'register'
 
-        for unit_id in range(start_unit, end_unit + 1):
+        for slave_id in range(start_slave, end_slave + 1):
             # Check for Late Responses from previous iterations
             while client._late_responses:
                 lr = client._late_responses.pop(0)
                 ghost_count += 1
-                msg = f"Unit {lr.unit_id}: Late Recovery (Ghost Data)!"
+
+                # Parse value from late response
+                val = 0
+                if len(lr.data) >= 3:
+                    val = struct.unpack(">H", lr.data[1:3])[0]
+
+                msg = f"Slave {lr.slave_id}: Found (Value {val}) (Late Recovery)"
                 # Client already logged warning to system log, just add to UI trace
                 trace.log(msg)
-                scan_results.append({"unit_id": lr.unit_id, "status": "late_recovery"})
-                found_devices.append({"unit_id": lr.unit_id, "value": "Late Recovery"})
+                scan_results.append(
+                    {"slave_id": lr.slave_id, "status": "late_recovery"}
+                )
+                found_devices.append(
+                    {"slave_id": lr.slave_id, "value": val, "note": "(Late Recovery)"}
+                )
 
             try:
                 start_req = time.monotonic()
-                resp = client.execute(unit_id, fc, req_data)
+                resp = client.execute(slave_id, fc, req_data)
                 elapsed = time.monotonic() - start_req
 
                 # If we got here, we have data.
@@ -125,24 +135,24 @@ def _run_scan_sync(
                 if len(resp) >= 3:
                     val = struct.unpack(">H", resp[1:3])[0]
 
-                msg = f"Unit {unit_id}: Found (Value {val}) in {elapsed:.2f}s"
+                msg = f"Slave {slave_id}: Found (Value {val}) in {elapsed:.2f}s"
                 log(msg, level="info")
 
                 scan_results.append(
-                    {"unit_id": unit_id, "status": "ok", "elapsed": elapsed}
+                    {"slave_id": slave_id, "status": "ok", "elapsed": elapsed}
                 )
                 found_devices.append(
-                    {"unit_id": unit_id, "value": val, "elapsed": elapsed}
+                    {"slave_id": slave_id, "value": val, "elapsed": elapsed}
                 )
 
             except ModbusExceptionResponseError as e:
                 # Device exists but returned exception
                 elapsed = time.monotonic() - start_req
-                msg = f"Unit {unit_id}: Exception Response (Code {e.code}) in {elapsed:.2f}s"
+                msg = f"Slave {slave_id}: Exception Response (Code {e.code}) in {elapsed:.2f}s"
                 log(msg, level="warning")
                 scan_results.append(
                     {
-                        "unit_id": unit_id,
+                        "slave_id": slave_id,
                         "status": "exception",
                         "error": str(e),
                         "elapsed": elapsed,
@@ -150,7 +160,7 @@ def _run_scan_sync(
                 )
                 found_devices.append(
                     {
-                        "unit_id": unit_id,
+                        "slave_id": slave_id,
                         "error": f"Exception Code {e.code}",
                         "elapsed": elapsed,
                     }
@@ -159,9 +169,9 @@ def _run_scan_sync(
             except ModbusTimeoutError:
                 # Timeout
                 elapsed = time.monotonic() - start_req
-                log(f"Unit {unit_id}: Timed out ({elapsed:.2f}s)", level="debug")
+                log(f"Slave {slave_id}: Timed out ({elapsed:.2f}s)", level="debug")
                 scan_results.append(
-                    {"unit_id": unit_id, "status": "timeout", "elapsed": elapsed}
+                    {"slave_id": slave_id, "status": "timeout", "elapsed": elapsed}
                 )
                 error_count += 1
 
@@ -170,10 +180,10 @@ def _run_scan_sync(
                 elapsed = time.monotonic() - start_req
                 # Client already logs ModbusError as warning if it happened in loop,
                 # but here it might be a connection error from execute() outside loop.
-                log(f"Unit {unit_id}: Error {e}", level="debug")
+                log(f"Slave {slave_id}: Error {e}", level="debug")
                 scan_results.append(
                     {
-                        "unit_id": unit_id,
+                        "slave_id": slave_id,
                         "status": "error",
                         "error": str(e),
                         "elapsed": elapsed,
@@ -185,9 +195,18 @@ def _run_scan_sync(
         while client._late_responses:
             lr = client._late_responses.pop(0)
             ghost_count += 1
-            msg = f"Unit {lr.unit_id}: Late Recovery (Ghost Data) - After Scan"
+
+            val = 0
+            if len(lr.data) >= 3:
+                val = struct.unpack(">H", lr.data[1:3])[0]
+
+            msg = (
+                f"Slave {lr.slave_id}: Found (Value {val}) (Late Recovery) - After Scan"
+            )
             trace.log(msg)
-            found_devices.append({"unit_id": lr.unit_id, "value": "Late Recovery"})
+            found_devices.append(
+                {"slave_id": lr.slave_id, "value": val, "note": "(Late Recovery)"}
+            )
 
     except Exception as e:
         log(f"Critical Scan Error: {e}", level="error")
@@ -196,7 +215,7 @@ def _run_scan_sync(
 
     # Heuristics: Post-Scan
     warn_silent = check_silent_gateway(
-        len(found_devices), error_count, (end_unit - start_unit + 1)
+        len(found_devices), error_count, (end_slave - start_slave + 1)
     )
     if warn_silent:
         log(warn_silent, level="warning")
@@ -217,10 +236,15 @@ def _run_scan_sync(
             level="warning",
         )
 
-    log("Scan complete.", level="info")
+    # Info Summary
+    total_scanned = end_slave - start_slave + 1
+    total_found = len(found_devices)
+    # duration is calculated outside in async wrapper, but we can't access it here easily for logging inside _run.
+    # We'll just log scanned/found here.
+    log(f"Scan Complete. Scanned: {total_scanned}, Found: {total_found}.", level="info")
 
     return {
-        "found_devices": sorted(found_devices, key=lambda x: x.get("unit_id", 0)),
+        "found_devices": sorted(found_devices, key=lambda x: x.get("slave_id", 0)),
         "trace": trace.get_trace(),
         "count": len(found_devices),
     }
@@ -231,8 +255,8 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     hub_id = call.data.get("hub_id")
     entry = get_config_entry(hass, hub_id)
 
-    start_unit = call.data.get("start_unit", 1)
-    end_unit = call.data.get("end_unit", 10)
+    start_slave = call.data.get("start_slave", 1)
+    end_slave = call.data.get("end_slave", 10)
     register = call.data.get("register", 0)
     register_type = call.data.get("register_type", "holding")
     timeout = float(call.data.get("timeout", 2.0))
@@ -247,8 +271,8 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     result = await hass.async_add_executor_job(
         _run_scan_sync,
         entry.data,
-        start_unit,
-        end_unit,
+        start_slave,
+        end_slave,
         register,
         reg_type_code,
         timeout,
@@ -259,6 +283,6 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
 
     duration = time.perf_counter() - start_time
     result["scan_duration"] = duration
-    result["scanned_range"] = f"{start_unit}-{end_unit}"
+    result["scanned_range"] = f"{start_slave}-{end_slave}"
 
     return result
