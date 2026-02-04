@@ -90,9 +90,10 @@ def _run_scan_sync(config_data, start_unit, end_unit, register, reg_type_code, t
 
                 # If we got here, we have data.
                 # Parse value (1 register = 2 bytes)
+                # Modbus response (FC03/04) starts with Byte Count (1 byte)
                 val = 0
-                if len(resp) >= 2:
-                    val = struct.unpack(">H", resp[:2])[0]
+                if len(resp) >= 3:
+                    val = struct.unpack(">H", resp[1:3])[0]
 
                 msg = f"Unit {unit_id}: Found (Value {val})"
                 if show_trace: trace.log(msg)

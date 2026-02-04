@@ -238,6 +238,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_edit_connection(self, user_input=None):
         """Edit connection settings."""
+        connection_type = self._config_entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TYPE_TCP)
+
         if user_input is not None:
             # We must update the main config entry data
             new_data = self._config_entry.data.copy()
@@ -249,17 +251,27 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             await self.hass.config_entries.async_reload(self._config_entry.entry_id)
             return self.async_create_entry(title="", data={})
 
-        current_host = self._config_entry.data.get(CONF_HOST)
         current_port = self._config_entry.data.get(CONF_PORT)
         current_timeout = self._config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
 
-        return self.async_show_form(
-            step_id="edit_connection",
-            data_schema=vol.Schema(
+        if connection_type == CONNECTION_TYPE_SERIAL:
+            schema = vol.Schema(
+                {
+                    vol.Required(CONF_PORT, default=current_port): str,
+                    vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
+                }
+            )
+        else:
+            current_host = self._config_entry.data.get(CONF_HOST)
+            schema = vol.Schema(
                 {
                     vol.Required(CONF_HOST, default=current_host): str,
                     vol.Required(CONF_PORT, default=current_port): int,
                     vol.Optional(CONF_TIMEOUT, default=current_timeout): int,
                 }
-            ),
+            )
+
+        return self.async_show_form(
+            step_id="edit_connection",
+            data_schema=schema,
         )

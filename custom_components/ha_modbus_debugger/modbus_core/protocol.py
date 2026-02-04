@@ -38,27 +38,12 @@ def build_tcp_request(transaction_id: int, unit_id: int, function_code: int, dat
 
 def parse_mbap_header(header_data: bytes) -> tuple[int, int, int]:
     """Parse Modbus TCP Header (MBAP). Returns (transaction_id, protocol_id, length)."""
-    if len(header_data) != 7:
-        raise ModbusInvalidResponseError(f"MBAP header must be 7 bytes, got {len(header_data)}")
-
-    transaction_id, protocol_id, length, unit_id = struct.unpack(">HHHB", header_data)
-    # Note: We return unit_id as part of the body parsing usually, but MBAP is 7 bytes (Header=6 + UnitID=1 ?)
-    # Standard MBAP is 7 bytes:
-    # 2 bytes TID
-    # 2 bytes PID
-    # 2 bytes Length
-    # 1 byte Unit ID
-    # So header_data usually includes UnitID if we read 7 bytes.
-    # Let's adjust.
-    # Usually TCP client reads 6 bytes first (TID, PID, LEN), then reads LEN bytes.
-    # The first byte of "LEN bytes" is Unit ID.
-
-    # Let's assume input is the 6-byte prefix: TID, PID, LEN.
     if len(header_data) == 6:
-        transaction_id, protocol_id, length = struct.unpack(">HHH", header_data)
-        return transaction_id, protocol_id, length
-
-    raise ModbusInvalidResponseError("Invalid MBAP header length")
+        return struct.unpack(">HHH", header_data)
+    if len(header_data) == 7:
+        tid, pid, length, uid = struct.unpack(">HHHB", header_data)
+        return tid, pid, length
+    raise ModbusInvalidResponseError(f"MBAP header must be 6 or 7 bytes, got {len(header_data)}")
 
 def validate_rtu_crc(data: bytes) -> bool:
     """Validate CRC of a full RTU packet."""

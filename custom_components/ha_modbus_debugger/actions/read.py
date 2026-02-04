@@ -1,5 +1,4 @@
 """Read Register Action."""
-import time
 import struct
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from homeassistant.exceptions import ServiceValidationError
