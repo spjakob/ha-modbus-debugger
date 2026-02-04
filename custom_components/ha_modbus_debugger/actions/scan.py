@@ -35,29 +35,57 @@ def _run_scan_sync(
     """Synchronous scan execution."""
 
     trace = TraceLogger()
+
+    # Verbosity Logic
     show_trace = verbosity in ["detailed", "debug"]
     show_debug = verbosity == "debug"
 
-    # Log start
+    # --- Unified Logger ---
+    # Writes to:
+    # 1. UI Trace (if show_trace/show_debug allows)
+    # 2. File Log (if log_to_file is True)
+    def log(msg, level="info"):
+        # 1. Write to File?
+        if log_to_file:
+            if level == "error":
+                _LOGGER.error(msg)
+            elif level == "warning":
+                _LOGGER.warning(msg)
+            elif level == "debug":
+                _LOGGER.debug(msg)
+            else:
+                _LOGGER.info(msg)
+
+        # 2. Write to UI Trace?
+        if level in ["error", "warning"] or show_trace:
+            if level == "debug" and not show_debug:
+                return  # Skip debug msg in detailed mode
+            trace.log(msg)
+
     target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
-    if show_trace:
-        trace.log(
-            f"Starting scan on {config_data.get('name')} ({target}). Range {start_unit}-{end_unit}."
-        )
+    log(
+        f"Starting scan on {config_data.get('name')} ({target}). Range {start_unit}-{end_unit}.",
+        level="info",
+    )
 
     # Heuristics: Static checks
     warn_fast = check_fast_timeout(timeout)
     if warn_fast:
-        trace.log(warn_fast)
+        log(warn_fast, level="warning")
 
     warn_port = check_non_standard_port(
         config_data.get("port", 0), config_data.get("connection_type")
     )
     if warn_port:
-        trace.log(warn_port)
+        log(warn_port, level="warning")
 
     # Initialize Client
     client = get_client(config_data, timeout, retries)
+
+    # Wire client packet logging to our logger
+    # Only show packet logs in Debug mode
+    if show_debug:
+        client.trace_callback = lambda m: log(m, level="debug")
 
     found_devices = []
     scan_results = []  # Store raw results for analysis
@@ -76,8 +104,7 @@ def _run_scan_sync(
             while client._late_responses:
                 lr = client._late_responses.pop(0)
                 msg = f"Unit {lr.unit_id}: Late Recovery (Ghost Data)!"
-                if show_trace:
-                    trace.log(msg)
+                log(msg, level="warning")
                 scan_results.append({"unit_id": lr.unit_id, "status": "late_recovery"})
                 found_devices.append({"unit_id": lr.unit_id, "value": "Late Recovery"})
 
@@ -93,9 +120,8 @@ def _run_scan_sync(
                 if len(resp) >= 3:
                     val = struct.unpack(">H", resp[1:3])[0]
 
-                msg = f"Unit {unit_id}: Found (Value {val})"
-                if show_trace:
-                    trace.log(msg)
+                msg = f"Unit {unit_id}: Found (Value {val}) in {elapsed:.2f}s"
+                log(msg, level="info")
 
                 scan_results.append(
                     {"unit_id": unit_id, "status": "ok", "elapsed": elapsed}
@@ -107,9 +133,8 @@ def _run_scan_sync(
             except ModbusExceptionResponseError as e:
                 # Device exists but returned exception
                 elapsed = time.monotonic() - start_req
-                msg = f"Unit {unit_id}: Exception Response (Code {e.code})"
-                if show_trace:
-                    trace.log(msg)
+                msg = f"Unit {unit_id}: Exception Response (Code {e.code}) in {elapsed:.2f}s"
+                log(msg, level="warning")
                 scan_results.append(
                     {
                         "unit_id": unit_id,
@@ -129,8 +154,7 @@ def _run_scan_sync(
             except ModbusTimeoutError:
                 # Timeout
                 elapsed = time.monotonic() - start_req
-                if show_debug:
-                    trace.log(f"Unit {unit_id}: Timed out ({elapsed:.2f}s)")
+                log(f"Unit {unit_id}: Timed out ({elapsed:.2f}s)", level="debug")
                 scan_results.append(
                     {"unit_id": unit_id, "status": "timeout", "elapsed": elapsed}
                 )
@@ -139,8 +163,7 @@ def _run_scan_sync(
             except ModbusError as e:
                 # Other error (CRC, Connection)
                 elapsed = time.monotonic() - start_req
-                if show_debug:
-                    trace.log(f"Unit {unit_id}: Error {e}")
+                log(f"Unit {unit_id}: Error {e}", level="debug")
                 scan_results.append(
                     {
                         "unit_id": unit_id,
@@ -155,12 +178,11 @@ def _run_scan_sync(
         while client._late_responses:
             lr = client._late_responses.pop(0)
             msg = f"Unit {lr.unit_id}: Late Recovery (Ghost Data) - After Scan"
-            if show_trace:
-                trace.log(msg)
+            log(msg, level="warning")
             found_devices.append({"unit_id": lr.unit_id, "value": "Late Recovery"})
 
     except Exception as e:
-        trace.log(f"Critical Scan Error: {e}")
+        log(f"Critical Scan Error: {e}", level="error")
     finally:
         client.close()
 
@@ -169,7 +191,7 @@ def _run_scan_sync(
         len(found_devices), error_count, (end_unit - start_unit + 1)
     )
     if warn_silent:
-        trace.log(warn_silent)
+        log(warn_silent, level="warning")
 
     # Check Hard Timeouts
     hard_timeouts = [
@@ -178,8 +200,9 @@ def _run_scan_sync(
         if r["status"] == "timeout" and r["elapsed"] >= (timeout * 0.95)
     ]
     if len(hard_timeouts) > 0 and len(found_devices) == 0:
-        trace.log(
-            "Tip: Multiple hard timeouts detected. This may indicate the timeout is too short for the gateway."
+        log(
+            "Tip: Multiple hard timeouts detected. This may indicate the timeout is too short for the gateway.",
+            level="warning",
         )
 
     return {

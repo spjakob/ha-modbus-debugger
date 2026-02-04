@@ -69,6 +69,9 @@ class SyncModbusClient:
         self._last_error = None
         self._late_responses = []  # Buffer for late responses found during execution
 
+        # Callback for detailed packet logging (injected by services)
+        self.trace_callback = None
+
     def connect(self):
         """Establish connection."""
         self.close()  # Ensure clean slate
@@ -87,8 +90,12 @@ class SyncModbusClient:
                     stopbits=self.stopbits,
                     timeout=self.timeout,
                 )
+            if self.trace_callback:
+                self.trace_callback(f"DEBUG: Connected to {self.host}:{self.port}")
         except Exception as e:
             _LOGGER.error("Connection failed: %s", e)
+            if self.trace_callback:
+                self.trace_callback(f"DEBUG: Connection failed: {e}")
             raise ModbusConnectionError(f"Failed to connect: {e}")
 
     def close(self):
@@ -119,9 +126,10 @@ class SyncModbusClient:
         # 1. Smart Drain: Clear ghost data
         drained_bytes = self._drain_input()
         if drained_bytes:
-            _LOGGER.debug(
-                "Smart Drain: cleared %d bytes of ghost data", len(drained_bytes)
-            )
+            msg = f"DEBUG: Smart Drain (Ghost Data): {drained_bytes.hex().upper()}"
+            _LOGGER.debug(msg)
+            if self.trace_callback:
+                self.trace_callback(msg)
 
         # 2. Build Request
         if self.connection_type == "tcp" and not self.rtu_over_tcp:
@@ -131,6 +139,9 @@ class SyncModbusClient:
             req = build_rtu_request(unit_id, function_code, data)
 
         # 3. Send
+        if self.trace_callback:
+            self.trace_callback(f"TX: {req.hex().upper()}")
+
         start_time = time.monotonic()
         try:
             if self._socket:
@@ -153,13 +164,16 @@ class SyncModbusClient:
 
             try:
                 if self.connection_type == "tcp" and not self.rtu_over_tcp:
-                    resp_unit, resp_fc, resp_data = self._read_packet_tcp(
+                    resp_unit, resp_fc, resp_data, raw_frame = self._read_packet_tcp(
                         remaining_time
                     )
                 else:
-                    resp_unit, resp_fc, resp_data = self._read_packet_rtu(
+                    resp_unit, resp_fc, resp_data, raw_frame = self._read_packet_rtu(
                         remaining_time
                     )
+
+                if self.trace_callback:
+                    self.trace_callback(f"RX: {raw_frame.hex().upper()}")
 
                 # Check match
                 if resp_unit == unit_id:
@@ -178,9 +192,11 @@ class SyncModbusClient:
                         return resp_data  # Protocol parser handles exception codes
 
                 # Mismatch - Late Response?
-                _LOGGER.info(
-                    "Ghost Data Detected: Expected ID %d, got ID %d", unit_id, resp_unit
-                )
+                msg = f"DEBUG: Ghost Data Detected: Expected ID {unit_id}, got ID {resp_unit}"
+                _LOGGER.info(msg)
+                if self.trace_callback:
+                    self.trace_callback(msg)
+
                 self._late_responses.append(LateResponse(resp_unit, resp_fc, resp_data))
                 # Continue loop...
 
@@ -188,7 +204,9 @@ class SyncModbusClient:
                 # Actual timeout on the socket read
                 break
             except ModbusError as e:
-                _LOGGER.warning("Modbus Error during read loop: %s", e)
+                # CRC error etc
+                if self.trace_callback:
+                    self.trace_callback(f"DEBUG: Read Error: {e}")
                 # If it's a CRC error or similar, we might want to keep listening?
                 # For safety, let's break to avoid infinite loops on noise.
                 break
@@ -225,7 +243,7 @@ class SyncModbusClient:
             pass  # Ignore errors during drain
         return data
 
-    def _read_packet_tcp(self, timeout: float) -> tuple[int, int, bytes]:
+    def _read_packet_tcp(self, timeout: float) -> tuple[int, int, bytes, bytes]:
         """Read a full Modbus TCP packet."""
         self._socket.settimeout(timeout)
 
@@ -244,9 +262,9 @@ class SyncModbusClient:
         pdu = body[1:]
 
         fc, data = parse_response_pdu(pdu)
-        return unit_id, fc, data
+        return unit_id, fc, data, (mbap + body)
 
-    def _read_packet_rtu(self, timeout: float) -> tuple[int, int, bytes]:
+    def _read_packet_rtu(self, timeout: float) -> tuple[int, int, bytes, bytes]:
         """Read a full Modbus RTU packet."""
         # RTU does not have a length header. We must read until silence or valid frame?
         # Implementing robust RTU reading over stream is hard without silence detection.
@@ -310,7 +328,7 @@ class SyncModbusClient:
         # Parse PDU (Strip CRC)
         pdu = full_frame[1:-2]  # Skip Unit, drop CRC
         fc_out, data_out = parse_response_pdu(pdu)
-        return unit_id, fc_out, data_out
+        return unit_id, fc_out, data_out, full_frame
 
     def _recv_n(self, n: int) -> bytes:
         """Helper to recv exactly n bytes from TCP socket."""

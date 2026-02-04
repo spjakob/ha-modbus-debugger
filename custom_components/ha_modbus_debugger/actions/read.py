@@ -32,6 +32,9 @@ def _run_read_sync(
         trace.log(warn_port)
 
     client = get_client(config_data, timeout, retries)
+    client.trace_callback = lambda msg: trace.log(
+        msg
+    )  # Always log packets to trace in Read mode
 
     all_registers = []
 
