@@ -59,12 +59,6 @@ def _run_read_sync(config_data, unit_id, register, count, reg_type_code, data_ty
             try:
                 resp = client.execute(unit_id, reg_type_code, req_data)
 
-                # Parse: Response to 03/04 is ByteCount (1) + Data (N)
-                # Client execute returns just the PDU data part (excluding FC).
-                # Wait, SyncModbusClient.execute returns `resp_data`.
-                # In `_read_packet_tcp`: `return unit_id, fc, data` (PDU data).
-                # For FC03, PDU data starts with Byte Count.
-
                 if len(resp) < 1:
                     raise ModbusError("Empty response")
 
@@ -74,8 +68,6 @@ def _run_read_sync(config_data, unit_id, register, count, reg_type_code, data_ty
                 if len(data_bytes) != byte_count:
                     trace.log(f"Warning: Byte count mismatch. Expected {byte_count}, got {len(data_bytes)}")
 
-                # Convert bytes to list of 16-bit integers
-                # byte_count should be chunk_size * 2
                 num_regs = byte_count // 2
 
                 for i in range(num_regs):

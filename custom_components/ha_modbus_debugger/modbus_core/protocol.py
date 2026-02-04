@@ -1,83 +1,35 @@
-"""Modbus Protocol Handling."""
 import struct
 from .exceptions import ModbusInvalidResponseError, ModbusExceptionResponseError
-
 def compute_crc(data: bytes) -> int:
-    """Compute CRC16 for Modbus RTU."""
     crc = 0xFFFF
     for char in data:
         crc ^= char
         for _ in range(8):
             if crc & 0x0001:
-                crc >>= 1
-                crc ^= 0xA001
-            else:
-                crc >>= 1
+                crc >>= 1; crc ^= 0xA001
+            else: crc >>= 1
     return crc
-
 def build_rtu_request(unit_id: int, function_code: int, data: bytes) -> bytes:
-    """Build a Modbus RTU request frame."""
     packet = struct.pack(">B", unit_id) + struct.pack(">B", function_code) + data
     crc = compute_crc(packet)
-    # CRC is Little Endian in Modbus
     return packet + struct.pack("<H", crc)
-
 def build_tcp_request(transaction_id: int, unit_id: int, function_code: int, data: bytes) -> bytes:
-    """Build a Modbus TCP request frame."""
-    # Transaction ID (2 bytes)
-    # Protocol ID (2 bytes, 0 for Modbus)
-    # Length (2 bytes, Unit ID + Func + Data)
-    # Unit ID (1 byte)
-    # Func (1 byte)
-    # Data (N bytes)
-
-    length = 1 + 1 + len(data) # Unit ID + Func + Data
+    length = 1 + 1 + len(data)
     header = struct.pack(">HHH", transaction_id, 0, length)
     body = struct.pack(">BB", unit_id, function_code) + data
     return header + body
-
 def parse_mbap_header(header_data: bytes) -> tuple[int, int, int]:
-    """Parse Modbus TCP Header (MBAP). Returns (transaction_id, protocol_id, length)."""
-    if len(header_data) != 7:
-        raise ModbusInvalidResponseError(f"MBAP header must be 7 bytes, got {len(header_data)}")
-
-    transaction_id, protocol_id, length, unit_id = struct.unpack(">HHHB", header_data)
-    # Note: We return unit_id as part of the body parsing usually, but MBAP is 7 bytes (Header=6 + UnitID=1 ?)
-    # Standard MBAP is 7 bytes:
-    # 2 bytes TID
-    # 2 bytes PID
-    # 2 bytes Length
-    # 1 byte Unit ID
-    # So header_data usually includes UnitID if we read 7 bytes.
-    # Let's adjust.
-    # Usually TCP client reads 6 bytes first (TID, PID, LEN), then reads LEN bytes.
-    # The first byte of "LEN bytes" is Unit ID.
-
-    # Let's assume input is the 6-byte prefix: TID, PID, LEN.
     if len(header_data) == 6:
-        transaction_id, protocol_id, length = struct.unpack(">HHH", header_data)
-        return transaction_id, protocol_id, length
-
-    raise ModbusInvalidResponseError("Invalid MBAP header length")
-
+        return struct.unpack(">HHH", header_data)
+    if len(header_data) == 7:
+        tid, pid, length, uid = struct.unpack(">HHHB", header_data)
+        return tid, pid, length
+    raise ModbusInvalidResponseError(f"MBAP header must be 6 or 7 bytes, got {len(header_data)}")
 def validate_rtu_crc(data: bytes) -> bool:
-    """Validate CRC of a full RTU packet."""
-    if len(data) < 4:
-        return False
-    msg = data[:-2]
-    received_crc = struct.unpack("<H", data[-2:])[0]
-    calculated_crc = compute_crc(msg)
-    return received_crc == calculated_crc
-
+    if len(data) < 4: return False
+    return struct.unpack("<H", data[-2:])[0] == compute_crc(data[:-2])
 def parse_response_pdu(data: bytes) -> tuple[int, bytes]:
-    """Parse PDU (Function Code + Data). Checks for Exception."""
-    if len(data) < 2:
-         raise ModbusInvalidResponseError("Response too short")
-
+    if len(data) < 2: raise ModbusInvalidResponseError("Response too short")
     fc = data[0]
-    # Check for Exception (High bit set)
-    if fc & 0x80:
-        exception_code = data[1]
-        raise ModbusExceptionResponseError(exception_code)
-
+    if fc & 0x80: raise ModbusExceptionResponseError(data[1])
     return fc, data[1:]

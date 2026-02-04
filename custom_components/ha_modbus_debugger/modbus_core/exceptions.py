@@ -1,24 +1,17 @@
-"""Modbus Debugger Exceptions."""
-
 class ModbusError(Exception):
-    """Base class for Modbus exceptions."""
-    pass
+    """Base class for modbus errors."""
 
 class ModbusConnectionError(ModbusError):
-    """Raised when connection fails."""
-    pass
+    """Error connecting to gateway."""
 
 class ModbusTimeoutError(ModbusError):
-    """Raised when request times out."""
-    pass
+    """Timeout waiting for response."""
 
 class ModbusInvalidResponseError(ModbusError):
-    """Raised when response is invalid (CRC, length, etc)."""
-    pass
+    """Response packet is invalid or corrupted."""
 
 class ModbusExceptionResponseError(ModbusError):
-    """Raised when device returns a Modbus Exception code."""
-    def __init__(self, code, message="Modbus Exception"):
+    """Gateway returned a Modbus Exception (e.g. 0x02 Illegal Address)."""
+    def __init__(self, code):
         self.code = code
-        self.message = message
-        super().__init__(f"{message}: Code {code}")
+        super().__init__(f"Modbus Exception Code {code}")

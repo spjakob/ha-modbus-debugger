@@ -1,0 +1,32 @@
+### **Project History & Technical Rationale**
+The `ha-modbus-debugger` integration has undergone a fundamental transformation from a "Sensor polling" tool into a pure **"Diagnostic Toolbox"**.
+
+**The Sync vs. Async Conflict:**
+Originally, the integration relied on `pymodbus` (Async) for standard polling. However, real-world deployment on Modbus RS485 gateways revealed a critical flaw: concurrent asynchronous requests often cause "Head-of-Line Blocking." When one device on a serial bus slows down or timeouts, the entire async queue stalls, or worse, late responses for a timed-out request arrive during the window of a *different* subsequent request, leading to data corruption or "Pipeline Desync."
+
+Simulations proved that on single-threaded gateways, **Concurrent (Async) scanning is no faster than Sequential (Sync) scanning.** Consequently, the project shifted to a custom synchronous driver. By running sequential logic within Home Assistant's thread executor (`hass.async_add_executor_job`), we prevent blocking the main event loop while ensuring strict, predictable sequential communication on the Modbus bus.
+
+### **Current Architecture: "Modbus Toolbox"**
+- **Custom Core Driver (`modbus_core/`)**: A lightweight synchronous Modbus client built on raw `socket` and `pyserial`. It completely replaces `pymodbus` in the production runtime to ensure absolute control over the communication timing.
+    - **Smart Drain**: Before every request, the scanner clears the input buffer to discard "Ghost Data" (leftovers from previous timeouts).
+    - **Late Response Recovery (Read-Until-Match)**: If the client receives a response for a *previous* Unit ID while waiting for the current one, it captures it as a valid "Late Recovery" result instead of discarding it.
+- **Actions-Only Provider**: The integration no longer provides sensor entities. It is now a pure service-based tool for scanning, reading, and stress-testing devices.
+- **Address Book Config Flow**: Config Entries now act as "Connection Profiles" (Host/Port). They no longer initialize background hub objects; instead, services use these profiles to create one-off or persistent connections during execution.
+
+### **What has been completed**
+1.  **Service Registry**: `__init__.py` and `actions/__init__.py` are updated to register the diagnostic actions.
+2.  **Core Driver Implementation**: `modbus_core/` includes the `SyncModbusClient`, raw packet builders in `protocol.py`, and custom `exceptions.py`.
+3.  **Action Logic**:
+    - `actions/scan.py`: Robust sequential scanning with recovery logic.
+    - `actions/read.py`: Chunked register reading (auto-handling Modbus 125-register limits) with table formatting.
+    - `actions/stress.py`: A new action to benchmark device latency and success rates.
+4.  **Heuristics Engine**: Located in `modbus_core/heuristics.py`, this provides warnings for non-standard ports, fast timeouts (<600ms), and silent gateways.
+5.  **Cleanup**: Removed `pymodbus` from `manifest.json` requirements and deleted legacy `modbus.py` and `sensor.py` logic.
+
+### **What remains to be done**
+1.  **Environment Stability Check**: Ensure all implemented helper files (specifically `helpers/formatting.py`) are correctly persisted in the production environment.
+2.  **Test Suite Refinement**: While the tests have been pruned and updated, the integration tests (`tests/test_scanner_integration.py`) need a final run in a clean environment to verify the "Pipeline Desync" recovery logic under simulated gateway stress.
+3.  **CI/CD Pathing**: Fix collection errors in `pytest` by ensuring the `conftest.py` properly mocks `homeassistant` modules before any local imports are triggered.
+4.  **Documentation**: Update `README.md` to reflect the "Diagnostic Toolbox" branding and explain the "Smart Drain" mechanism to end-users.
+
+All code has been committed and submitted to the branch `refactor-modbus-toolbox-v2`. This branch represents the move to a more stable, sequential, and diagnostic-focused integration.
