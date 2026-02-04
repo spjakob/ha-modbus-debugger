@@ -29,6 +29,12 @@ def _run_stress_sync(
         client.connect()
         for i in range(iterations):
             start_time = time.monotonic()
+
+            # Check for Late Responses (Ghost Data)
+            while client._late_responses:
+                lr = client._late_responses.pop(0)
+                trace.log(f"Unit {lr.unit_id}: Late Recovery (Ghost Data)!")
+
             remaining = count
             current_addr = register
             try:

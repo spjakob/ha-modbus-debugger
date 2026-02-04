@@ -44,36 +44,10 @@
     "step": {
       "menu": {
         "title": "Modbus Debugger Options",
-        "description": "Manage sensors and connection settings.",
+        "description": "Manage connection settings.",
         "menu_options": {
-          "add_sensor": "Add a new Sensor",
-          "remove_sensor": "Manage/Remove Sensors",
-          "list_sensors": "List Configured Sensors",
           "edit_connection": "Edit Connection Settings"
         }
-      },
-      "add_sensor": {
-        "title": "Add Sensor",
-        "description": "Create a persistent sensor for a register you have verified.",
-        "data": {
-          "name": "Sensor Name",
-          "unit_id": "Unit ID",
-          "register": "Register Address",
-          "count": "Register Count",
-          "data_type": "Data Type",
-          "scan_interval": "Update Interval (seconds)"
-        }
-      },
-      "remove_sensor": {
-        "title": "Manage Sensors",
-        "description": "Select the sensors you want to delete. If you don't want to delete any, just click Submit.",
-        "data": {
-          "sensors": "Sensors to Remove"
-        }
-      },
-      "list_sensors": {
-        "title": "Configured Sensors",
-        "description": "Here is a list of your configured sensors:\n\n{sensor_list}"
       },
       "edit_connection": {
         "title": "Edit Connection",
