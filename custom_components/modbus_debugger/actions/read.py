@@ -58,8 +58,10 @@ def _run_read_sync(
 
             try:
                 resp = client.execute(slave_id, reg_type_code, req_data)
-                rtt_ms = client.last_rtt * 1000
-                trace.log(f"Response received in {rtt_ms:.1f}ms")
+                rtt = client.last_rtt
+                if isinstance(rtt, (int, float)):
+                    rtt_ms = rtt * 1000
+                    trace.log(f"Response received in {rtt_ms:.1f}ms")
 
                 # Response to Read Holding (03) / Input (04) starts with Byte Count (1 byte)
                 if len(resp) < 1:
