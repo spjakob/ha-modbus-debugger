@@ -14,6 +14,7 @@ from ..modbus_core.heuristics import (
     check_fast_timeout,
     check_non_standard_port,
     check_silent_gateway,
+    check_ghost_data,
 )
 from ..helpers.formatting import TraceLogger
 from ..helpers.connection import get_client, get_config_entry
@@ -43,10 +44,11 @@ def _run_scan_sync(
     # --- Unified Logger ---
     # Writes to:
     # 1. UI Trace (if show_trace/show_debug allows)
-    # 2. File Log (if log_to_file is True)
+    # 2. File Log (if log_to_file is True OR level is warning/error)
     def log(msg, level="info"):
         # 1. Write to File?
-        if log_to_file:
+        # Critical issues are ALWAYS logged to system log
+        if log_to_file or level in ["warning", "error"]:
             if level == "error":
                 _LOGGER.error(msg)
             elif level == "warning":
@@ -92,6 +94,7 @@ def _run_scan_sync(
 
     # Trackers for Heuristics
     error_count = 0
+    ghost_count = 0
 
     try:
         client.connect()
@@ -103,8 +106,10 @@ def _run_scan_sync(
             # Check for Late Responses from previous iterations
             while client._late_responses:
                 lr = client._late_responses.pop(0)
+                ghost_count += 1
                 msg = f"Unit {lr.unit_id}: Late Recovery (Ghost Data)!"
-                log(msg, level="warning")
+                # Client already logged warning to system log, just add to UI trace
+                trace.log(msg)
                 scan_results.append({"unit_id": lr.unit_id, "status": "late_recovery"})
                 found_devices.append({"unit_id": lr.unit_id, "value": "Late Recovery"})
 
@@ -163,6 +168,8 @@ def _run_scan_sync(
             except ModbusError as e:
                 # Other error (CRC, Connection)
                 elapsed = time.monotonic() - start_req
+                # Client already logs ModbusError as warning if it happened in loop,
+                # but here it might be a connection error from execute() outside loop.
                 log(f"Unit {unit_id}: Error {e}", level="debug")
                 scan_results.append(
                     {
@@ -177,8 +184,9 @@ def _run_scan_sync(
         # Final check for Late Responses after loop
         while client._late_responses:
             lr = client._late_responses.pop(0)
+            ghost_count += 1
             msg = f"Unit {lr.unit_id}: Late Recovery (Ghost Data) - After Scan"
-            log(msg, level="warning")
+            trace.log(msg)
             found_devices.append({"unit_id": lr.unit_id, "value": "Late Recovery"})
 
     except Exception as e:
@@ -193,6 +201,10 @@ def _run_scan_sync(
     if warn_silent:
         log(warn_silent, level="warning")
 
+    warn_ghost = check_ghost_data(ghost_count, timeout)
+    if warn_ghost:
+        log(warn_ghost, level="warning")
+
     # Check Hard Timeouts
     hard_timeouts = [
         r
@@ -204,6 +216,8 @@ def _run_scan_sync(
             "Tip: Multiple hard timeouts detected. This may indicate the timeout is too short for the gateway.",
             level="warning",
         )
+
+    log("Scan complete.", level="info")
 
     return {
         "found_devices": sorted(found_devices, key=lambda x: x.get("unit_id", 0)),

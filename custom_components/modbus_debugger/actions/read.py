@@ -1,5 +1,6 @@
 """Read Register Action."""
 
+import logging
 import struct
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
@@ -7,6 +8,8 @@ from ..modbus_core.exceptions import ModbusError
 from ..modbus_core.heuristics import check_non_standard_port
 from ..helpers.formatting import TraceLogger, TableFormatter
 from ..helpers.connection import get_client, get_config_entry
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _run_read_sync(
@@ -95,6 +98,7 @@ def _run_read_sync(
         }
 
     except Exception as e:
+        _LOGGER.error("Critical Error during read: %s", e)
         trace.log(f"Critical Error: {e}")
         return {"error": str(e), "trace": trace.get_trace()}
     finally:

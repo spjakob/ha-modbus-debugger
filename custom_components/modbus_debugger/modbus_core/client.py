@@ -91,11 +91,11 @@ class SyncModbusClient:
                     timeout=self.timeout,
                 )
             if self.trace_callback:
-                self.trace_callback(f"DEBUG: Connected to {self.host}:{self.port}")
+                self.trace_callback(f"Connected to {self.host}:{self.port}")
         except Exception as e:
             _LOGGER.error("Connection failed: %s", e)
             if self.trace_callback:
-                self.trace_callback(f"DEBUG: Connection failed: {e}")
+                self.trace_callback(f"Connection failed: {e}")
             raise ModbusConnectionError(f"Failed to connect: {e}")
 
     def close(self):
@@ -126,7 +126,7 @@ class SyncModbusClient:
         # 1. Smart Drain: Clear ghost data
         drained_bytes = self._drain_input()
         if drained_bytes:
-            msg = f"DEBUG: Smart Drain (Ghost Data): {drained_bytes.hex().upper()}"
+            msg = f"Smart Drain (Ghost Data): {drained_bytes.hex().upper()}"
             _LOGGER.debug(msg)
             if self.trace_callback:
                 self.trace_callback(msg)
@@ -192,8 +192,8 @@ class SyncModbusClient:
                         return resp_data  # Protocol parser handles exception codes
 
                 # Mismatch - Late Response?
-                msg = f"DEBUG: Ghost Data Detected: Expected ID {unit_id}, got ID {resp_unit}"
-                _LOGGER.info(msg)
+                msg = f"Ghost Data Detected: Expected ID {unit_id}, got ID {resp_unit}"
+                _LOGGER.warning(msg)
                 if self.trace_callback:
                     self.trace_callback(msg)
 
@@ -205,8 +205,9 @@ class SyncModbusClient:
                 break
             except ModbusError as e:
                 # CRC error etc
+                _LOGGER.warning("Modbus Error during read loop: %s", e)
                 if self.trace_callback:
-                    self.trace_callback(f"DEBUG: Read Error: {e}")
+                    self.trace_callback(f"Read Error: {e}")
                 # If it's a CRC error or similar, we might want to keep listening?
                 # For safety, let's break to avoid infinite loops on noise.
                 break
@@ -239,8 +240,8 @@ class SyncModbusClient:
             elif self._serial:
                 if self._serial.in_waiting > 0:
                     data = self._serial.read(self._serial.in_waiting)
-        except Exception:
-            pass  # Ignore errors during drain
+        except Exception as e:
+            _LOGGER.warning("Error draining input buffer: %s", e)
         return data
 
     def _read_packet_tcp(self, timeout: float) -> tuple[int, int, bytes, bytes]:

@@ -47,9 +47,13 @@ def _run_stress_sync(
             except ModbusError:
                 error_count += 1
             except Exception as e:
+                _LOGGER.error(
+                    "Critical error during stress test iteration %d: %s", i + 1, e
+                )
                 trace.log(f"Critical error iteration {i + 1}: {e}")
                 break
     except Exception as e:
+        _LOGGER.error("Failed to initialize stress test: %s", e)
         trace.log(f"Failed to initialize: {e}")
     finally:
         client.close()

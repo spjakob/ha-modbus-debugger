@@ -42,3 +42,14 @@ def check_hard_timeout(trace: list, timeout: float) -> str | None:
     # We'll need to parse the trace in the Action logic to call this, or pass stats.
     # For now, let's keep it simple.
     pass
+
+
+def check_ghost_data(ghost_count: int, timeout: float) -> str | None:
+    """Check if ghost data was detected."""
+    if ghost_count > 0:
+        return (
+            f"⚠️ Ghost Data detected ({ghost_count} packets). This indicates your "
+            f"Timeout ({timeout}s) is too short, causing responses to arrive after "
+            "the scanner has moved on."
+        )
+    return None
