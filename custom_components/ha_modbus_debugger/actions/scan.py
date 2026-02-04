@@ -2,10 +2,9 @@
 
 import time
 import logging
+import struct
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
-from homeassistant.exceptions import ServiceValidationError
 
-from ..modbus_core.client import SyncModbusClient
 from ..modbus_core.exceptions import (
     ModbusError,
     ModbusTimeoutError,
@@ -17,17 +16,9 @@ from ..modbus_core.heuristics import (
     check_silent_gateway,
 )
 from ..helpers.formatting import TraceLogger
-from ..const import CONNECTION_TYPE_TCP
+from ..helpers.connection import get_client, get_config_entry
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _get_config_entry(hass: HomeAssistant, entry_id: str):
-    """Get config entry by ID."""
-    entry = hass.config_entries.async_get_entry(entry_id)
-    if not entry:
-        raise ServiceValidationError(f"Hub {entry_id} not found.")
-    return entry
 
 
 def _run_scan_sync(
@@ -66,22 +57,7 @@ def _run_scan_sync(
         trace.log(warn_port)
 
     # Initialize Client
-    client = SyncModbusClient(
-        connection_type=config_data.get("connection_type"),
-        host=config_data.get("host")
-        if config_data.get("connection_type") == CONNECTION_TYPE_TCP
-        else config_data.get("port"),
-        port=config_data.get("port")
-        if config_data.get("connection_type") == CONNECTION_TYPE_TCP
-        else 0,
-        timeout=timeout,
-        retries=retries,
-        baudrate=config_data.get("baudrate", 9600),
-        bytesize=config_data.get("bytesize", 8),
-        parity=config_data.get("parity", "N"),
-        stopbits=config_data.get("stopbits", 1),
-        rtu_over_tcp=config_data.get("rtu_over_tcp", False),
-    )
+    client = get_client(config_data, timeout, retries)
 
     found_devices = []
     scan_results = []  # Store raw results for analysis
@@ -92,17 +68,7 @@ def _run_scan_sync(
     try:
         client.connect()
 
-        # We assume holding register (0x03) vs input (0x04)
-        # But 'reg_type_code' passed from service is usually 3 or 4.
         fc = reg_type_code
-
-        # Read byte count for register reading (1 register = 2 bytes)
-        # Actually we just want to read 1 register to check existence.
-        # Data payload for execute?
-        # Protocol build_tcp_request takes (unit, fc, data).
-        # For Read Holding (03): Data is Start Addr (2 bytes) + Count (2 bytes).
-        import struct
-
         req_data = struct.pack(">HH", register, 1)  # Read 1 register at 'register'
 
         for unit_id in range(start_unit, end_unit + 1):
@@ -122,9 +88,10 @@ def _run_scan_sync(
 
                 # If we got here, we have data.
                 # Parse value (1 register = 2 bytes)
+                # Modbus response (FC03/04) starts with Byte Count (1 byte)
                 val = 0
-                if len(resp) >= 2:
-                    val = struct.unpack(">H", resp[:2])[0]
+                if len(resp) >= 3:
+                    val = struct.unpack(">H", resp[1:3])[0]
 
                 msg = f"Unit {unit_id}: Found (Value {val})"
                 if show_trace:
@@ -225,7 +192,7 @@ def _run_scan_sync(
 async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """Handle the scan_devices service."""
     hub_id = call.data.get("hub_id")
-    entry = _get_config_entry(hass, hub_id)
+    entry = get_config_entry(hass, hub_id)
 
     start_unit = call.data.get("start_unit", 1)
     end_unit = call.data.get("end_unit", 10)

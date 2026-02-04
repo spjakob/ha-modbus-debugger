@@ -1,5 +1,6 @@
 """Actions Registry."""
 
+import functools
 from homeassistant.core import HomeAssistant, SupportsResponse
 from .scan import scan_devices
 from .read import read_register
@@ -13,24 +14,21 @@ SERVICE_STRESS_TEST = "stress_test_device"
 
 async def register_services(hass: HomeAssistant):
     """Register Modbus Debugger services."""
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_SCAN_DEVICES,
-        lambda call: scan_devices(hass, call),
+        functools.partial(scan_devices, hass),
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_READ_REGISTER,
-        lambda call: read_register(hass, call),
+        functools.partial(read_register, hass),
         supports_response=SupportsResponse.ONLY,
     )
-
     hass.services.async_register(
         DOMAIN,
         SERVICE_STRESS_TEST,
-        lambda call: stress_test(hass, call),
+        functools.partial(stress_test, hass),
         supports_response=SupportsResponse.ONLY,
     )

@@ -14,9 +14,7 @@ async def test_late_response_recovery_mocked():
     }
     from unittest.mock import patch
 
-    with patch(
-        "custom_components.ha_modbus_debugger.actions.scan.SyncModbusClient"
-    ) as MC:
+    with patch("custom_components.ha_modbus_debugger.actions.scan.get_client") as MC:
         client = MC.return_value
         from custom_components.ha_modbus_debugger.modbus_core.client import LateResponse
 

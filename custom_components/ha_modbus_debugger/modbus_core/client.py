@@ -166,10 +166,6 @@ class SyncModbusClient:
                     # Verify FC if needed (optional, but good practice)
                     # Note: Error responses have MSB set
                     if (resp_fc & 0x7F) == (function_code & 0x7F):
-                        # For Read functions (01-04), the first byte is Byte Count.
-                        # We return only the data registers to match professional standards.
-                        if resp_fc in [1, 2, 3, 4] and len(resp_data) > 0:
-                            return resp_data[1:]
                         return resp_data
                     else:
                         _LOGGER.warning(

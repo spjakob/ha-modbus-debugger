@@ -2,21 +2,11 @@
 
 import struct
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
-from homeassistant.exceptions import ServiceValidationError
 
-from ..modbus_core.client import SyncModbusClient
 from ..modbus_core.exceptions import ModbusError
 from ..modbus_core.heuristics import check_non_standard_port
 from ..helpers.formatting import TraceLogger, TableFormatter
-from ..const import CONNECTION_TYPE_TCP
-
-
-def _get_config_entry(hass: HomeAssistant, entry_id: str):
-    """Get config entry by ID."""
-    entry = hass.config_entries.async_get_entry(entry_id)
-    if not entry:
-        raise ServiceValidationError(f"Hub {entry_id} not found.")
-    return entry
+from ..helpers.connection import get_client, get_config_entry
 
 
 def _run_read_sync(
@@ -41,22 +31,7 @@ def _run_read_sync(
     if warn_port:
         trace.log(warn_port)
 
-    client = SyncModbusClient(
-        connection_type=config_data.get("connection_type"),
-        host=config_data.get("host")
-        if config_data.get("connection_type") == CONNECTION_TYPE_TCP
-        else config_data.get("port"),
-        port=config_data.get("port")
-        if config_data.get("connection_type") == CONNECTION_TYPE_TCP
-        else 0,
-        timeout=timeout,
-        retries=retries,
-        baudrate=config_data.get("baudrate", 9600),
-        bytesize=config_data.get("bytesize", 8),
-        parity=config_data.get("parity", "N"),
-        stopbits=config_data.get("stopbits", 1),
-        rtu_over_tcp=config_data.get("rtu_over_tcp", False),
-    )
+    client = get_client(config_data, timeout, retries)
 
     all_registers = []
 
@@ -77,15 +52,23 @@ def _run_read_sync(
             try:
                 resp = client.execute(unit_id, reg_type_code, req_data)
 
-                # Client execute returns only the registers (ByteCount is stripped)
-                if len(resp) == 0:
+                # Response to Read Holding (03) / Input (04) starts with Byte Count (1 byte)
+                if len(resp) < 1:
                     raise ModbusError("Empty response")
 
+                byte_count = resp[0]
+                data_bytes = resp[1:]
+
+                if len(data_bytes) != byte_count:
+                    trace.log(
+                        f"Warning: Byte count mismatch. Expected {byte_count}, got {len(data_bytes)}"
+                    )
+
                 # Convert bytes to list of 16-bit integers
-                num_regs = len(resp) // 2
+                num_regs = len(data_bytes) // 2
 
                 for i in range(num_regs):
-                    val = struct.unpack(">H", resp[i * 2 : (i + 1) * 2])[0]
+                    val = struct.unpack(">H", data_bytes[i * 2 : (i + 1) * 2])[0]
                     all_registers.append(val)
 
                 current_addr += chunk_size
@@ -118,7 +101,7 @@ def _run_read_sync(
 async def read_register(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """Handle the read_register service."""
     hub_id = call.data.get("hub_id")
-    entry = _get_config_entry(hass, hub_id)
+    entry = get_config_entry(hass, hub_id)
 
     unit_id = call.data.get("unit_id", 1)
     register = call.data.get("register")

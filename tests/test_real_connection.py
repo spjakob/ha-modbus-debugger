@@ -18,13 +18,16 @@ async def test_real_connection_healthy(mock_modbus_server):
     def run_sync_logic():
         client.connect()
         # Read Unit 1, Register 0, Count 1 -> Expect 1111 (0x0457)
+        # Result includes Byte Count (1 byte) + Data (2 bytes) = 3 bytes
         return client.execute(1, 3, b"\x00\x00\x00\x01")
 
     result = await loop.run_in_executor(None, run_sync_logic)
 
-    assert len(result) == 2
+    assert len(result) == 3
+    # First byte is byte count (2)
+    assert result[0] == 2
     # Verify value is 1111 (set in mock_gateway.py)
-    assert int.from_bytes(result, "big") == 1111
+    assert int.from_bytes(result[1:], "big") == 1111
 
 
 @pytest.mark.asyncio
