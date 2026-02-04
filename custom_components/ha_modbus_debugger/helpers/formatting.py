@@ -39,11 +39,22 @@ class TableFormatter:
             row["char"] = "".join(chr(b) if 32 <= b <= 126 else "." for b in chars)
             if i + 1 < len(registers):
                 next_val = registers[i + 1]
+
+                # Big Endian (Standard)
                 combined = (val << 16) | next_val
                 row["uint32"] = combined
                 row["int32"] = struct.unpack(">i", struct.pack(">I", combined))[0]
                 row["float32"] = round(
                     struct.unpack(">f", struct.pack(">I", combined))[0], 4
+                )
+
+                # Little Endian / Word Swap
+                combined_swap = (next_val << 16) | val
+                row["int32_le_swap"] = struct.unpack(
+                    ">i", struct.pack(">I", combined_swap)
+                )[0]
+                row["float32_le_swap"] = round(
+                    struct.unpack(">f", struct.pack(">I", combined_swap))[0], 4
                 )
             if data_type_filter != "all":
                 filtered_row = {"address": addr}
