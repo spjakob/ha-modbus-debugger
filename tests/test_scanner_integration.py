@@ -1,7 +1,7 @@
 import asyncio
 import pytest
-from custom_components.ha_modbus_debugger.actions.scan import _run_scan_sync
-from custom_components.ha_modbus_debugger.const import CONNECTION_TYPE_TCP
+from custom_components.modbus_debugger.actions.scan import _run_scan_sync
+from custom_components.modbus_debugger.const import CONNECTION_TYPE_TCP
 
 
 @pytest.mark.asyncio
@@ -14,9 +14,9 @@ async def test_late_response_recovery_mocked():
     }
     from unittest.mock import patch
 
-    with patch("custom_components.ha_modbus_debugger.actions.scan.get_client") as MC:
+    with patch("custom_components.modbus_debugger.actions.scan.get_client") as MC:
         client = MC.return_value
-        from custom_components.ha_modbus_debugger.modbus_core.client import LateResponse
+        from custom_components.modbus_debugger.modbus_core.client import LateResponse
 
         client._late_responses = [LateResponse(101, 3, bytes.fromhex("021111"))]
         client.execute.return_value = bytes.fromhex("022222")

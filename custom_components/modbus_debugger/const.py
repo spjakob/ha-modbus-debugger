@@ -1,6 +1,6 @@
 """Constants for the Modbus Debugger integration."""
 
-DOMAIN = "ha_modbus_debugger"
+DOMAIN = "modbus_debugger"
 CONF_CONNECTION_TYPE = "connection_type"
 CONF_HOST = "host"
 CONF_PORT = "port"

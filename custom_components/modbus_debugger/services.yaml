@@ -8,7 +8,7 @@ read_register:
       required: true
       selector:
         config_entry:
-          integration: ha_modbus_debugger
+          integration: modbus_debugger
     unit_id:
       name: Unit ID
       description: The Modbus Slave ID.
@@ -114,7 +114,7 @@ scan_devices:
       required: true
       selector:
         config_entry:
-          integration: ha_modbus_debugger
+          integration: modbus_debugger
     start_unit:
       name: Start Unit ID
       description: The Unit ID to start scanning from.
@@ -207,7 +207,7 @@ stress_test_device:
     hub_id:
       name: Hub ID
       required: true
-      selector: { config_entry: { integration: ha_modbus_debugger } }
+      selector: { config_entry: { integration: modbus_debugger } }
     unit_id:
       name: Unit ID
       required: true

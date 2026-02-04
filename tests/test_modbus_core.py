@@ -1,6 +1,6 @@
 import unittest
 import struct
-from custom_components.ha_modbus_debugger.modbus_core.protocol import (
+from custom_components.modbus_debugger.modbus_core.protocol import (
     compute_crc,
     build_rtu_request,
     build_tcp_request,

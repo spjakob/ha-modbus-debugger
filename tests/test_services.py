@@ -1,11 +1,11 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from custom_components.ha_modbus_debugger.actions import (
+from custom_components.modbus_debugger.actions import (
     SERVICE_READ_REGISTER,
     register_services,
 )
-from custom_components.ha_modbus_debugger.const import DOMAIN
+from custom_components.modbus_debugger.const import DOMAIN
 
 
 async def async_test_read_register_service():
@@ -28,7 +28,7 @@ async def async_test_read_register_service():
     hass.config_entries.async_get_entry.return_value = MagicMock(data=entry_data)
     call = MagicMock()
     call.data = {"hub_id": "h", "unit_id": 1, "register": 10, "count": 1}
-    with patch("custom_components.ha_modbus_debugger.actions.read.get_client") as MC:
+    with patch("custom_components.modbus_debugger.actions.read.get_client") as MC:
         MC.return_value.execute.return_value = bytes.fromhex("021234")
         response = await handler(call)
         assert response["table"][0]["uint16"] == 0x1234

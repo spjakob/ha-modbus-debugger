@@ -25,7 +25,7 @@ Modbus communication, especially over serial (RS485), is prone to "Head-of-Line 
 ## Installation
 
 ### manual
-1.  Copy the `custom_components/ha_modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
+1.  Copy the `custom_components/modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
 2.  Restart Home Assistant.
 
 ---
@@ -43,19 +43,19 @@ Modbus communication, especially over serial (RS485), is prone to "Head-of-Line 
 
 ## Actions (Services)
 
-### 1. Read Register (`ha_modbus_debugger.read_register`)
+### 1. Read Register (`modbus_debugger.read_register`)
 Read a range of registers and view a formatted table of interpretations.
 - **Hub ID**: The configured connection profile.
 - **Unit ID**: Slave ID (1-247).
 - **Register Address**: Start address.
 - **Count**: Number of registers (auto-chunks into Modbus-compliant requests).
 
-### 2. Scan Devices (`ha_modbus_debugger.scan_devices`)
+### 2. Scan Devices (`modbus_debugger.scan_devices`)
 Discover devices on the bus by checking for responses across a range of Unit IDs.
 - **Range**: Start and End Unit ID.
 - **Late Recovery**: Automatically logs if a device responded late during the scan.
 
-### 3. Stress Test (`ha_modbus_debugger.stress_test_device`)
+### 3. Stress Test (`modbus_debugger.stress_test_device`)
 Measure the reliability of a device by sending multiple requests in rapid succession.
 - **Iterations**: Number of requests to send (default 50).
 - **Statistics**: Returns success rate, min/max/avg latency.

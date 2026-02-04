@@ -1,7 +1,7 @@
 import pytest
 import asyncio
-from custom_components.ha_modbus_debugger.modbus_core.client import SyncModbusClient
-from custom_components.ha_modbus_debugger.const import CONNECTION_TYPE_TCP
+from custom_components.modbus_debugger.modbus_core.client import SyncModbusClient
+from custom_components.modbus_debugger.const import CONNECTION_TYPE_TCP
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_real_timeout_recovery(mock_modbus_server):
     loop = asyncio.get_running_loop()
 
     def run_fail_logic():
-        from custom_components.ha_modbus_debugger.modbus_core.exceptions import (
+        from custom_components.modbus_debugger.modbus_core.exceptions import (
             ModbusTimeoutError,
         )
 
