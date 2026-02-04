@@ -72,6 +72,11 @@ class SyncModbusClient:
         # Callback for detailed packet logging (injected by services)
         self.trace_callback = None
 
+        # Last execution metadata for validation
+        self.last_raw_frame = None
+        self.last_transaction_id = None
+        self.last_rtt = 0.0
+
     def connect(self):
         """Establish connection."""
         self.close()  # Ensure clean slate
@@ -180,6 +185,9 @@ class SyncModbusClient:
                     # Verify FC if needed (optional, but good practice)
                     # Note: Error responses have MSB set
                     if (resp_fc & 0x7F) == (function_code & 0x7F):
+                        self.last_rtt = time.monotonic() - start_time
+                        self.last_raw_frame = raw_frame
+                        self.last_transaction_id = self._transaction_id if self.connection_type == "tcp" and not self.rtu_over_tcp else None
                         return resp_data
                     else:
                         _LOGGER.warning(

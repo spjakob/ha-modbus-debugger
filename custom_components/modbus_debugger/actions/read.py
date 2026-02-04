@@ -6,6 +6,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
 from ..modbus_core.exceptions import ModbusError
 from ..modbus_core.heuristics import check_non_standard_port
+from ..modbus_core.protocol import validate_response
 from ..helpers.formatting import TraceLogger, TableFormatter
 from ..helpers.connection import get_client, get_config_entry
 
@@ -57,6 +58,8 @@ def _run_read_sync(
 
             try:
                 resp = client.execute(slave_id, reg_type_code, req_data)
+                rtt_ms = client.last_rtt * 1000
+                trace.log(f"Response received in {rtt_ms:.1f}ms")
 
                 # Response to Read Holding (03) / Input (04) starts with Byte Count (1 byte)
                 if len(resp) < 1:
@@ -64,6 +67,16 @@ def _run_read_sync(
 
                 byte_count = resp[0]
                 data_bytes = resp[1:]
+
+                # Perform strict validation
+                violations = validate_response(
+                    resp,
+                    chunk_size,
+                    sent_tid=client.last_transaction_id,
+                    raw_frame=client.last_raw_frame,
+                )
+                for violation in violations:
+                    trace.log(f"[VIOLATION] {violation}")
 
                 if len(data_bytes) != byte_count:
                     trace.log(

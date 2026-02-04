@@ -77,3 +77,81 @@ def parse_response_pdu(data: bytes) -> tuple[int, bytes]:
         raise ModbusExceptionResponseError(exception_code)
 
     return fc, data[1:]
+
+
+def check_gaps(data: bytes) -> str | None:
+    """Scan returned bytes for large blocks of zeros or ones (Gap check)."""
+    if len(data) <= 10:
+        return None
+
+    # Check for 10+ consecutive 0x00 or 0xFF
+    zeros = b"\x00" * 10
+    ones = b"\xff" * 10
+
+    if zeros in data or ones in data:
+        return "WARNING: Large block of zeros/ones detected. This might be an invalid 'Gap' read."
+    return None
+
+
+def validate_response(
+    pdu_data: bytes,
+    expected_count: int,
+    sent_tid: int | None = None,
+    raw_frame: bytes | None = None,
+) -> list[str]:
+    """
+    Perform strict Modbus validation.
+    pdu_data: The data part of the PDU (excluding Function Code).
+              For reads, the first byte is the byte count.
+    """
+    violations = []
+
+    # 1. Byte Count Check (For Read Functions)
+    if len(pdu_data) < 1:
+        violations.append("VIOLATION: Response PDU too short (missing byte count).")
+        return violations
+
+    claimed_byte_count = pdu_data[0]
+    actual_data_len = len(pdu_data) - 1
+
+    if claimed_byte_count != expected_count * 2:
+        violations.append(
+            f"VIOLATION: Byte Count Mismatch. Expected {expected_count * 2} bytes ({expected_count} regs), "
+            f"Device claimed {claimed_byte_count} bytes. This will cause Home Assistant to timeout."
+        )
+
+    # 2. Actual Data Length Check
+    if actual_data_len != claimed_byte_count:
+        violations.append(
+            f"VIOLATION: Payload Mismatch. Header claimed {claimed_byte_count} bytes, "
+            f"but received {actual_data_len} bytes."
+        )
+
+    # 3. MBAP / TID Checks (TCP only)
+    if raw_frame and len(raw_frame) >= 6:
+        # MBAP Header: TID(2), PID(2), Len(2)
+        try:
+            tid, pid, length = struct.unpack(">HHH", raw_frame[:6])
+
+            if sent_tid is not None and tid != sent_tid:
+                violations.append(
+                    f"VIOLATION: Transaction ID Mismatch. Sent {sent_tid}, received {tid}."
+                )
+
+            # MBAP Length check: Does it match the remaining bytes?
+            # MBAP Length field includes Unit ID (1) + PDU (Function Code (1) + Data (N))
+            remaining_bytes = len(raw_frame) - 6
+            if length != remaining_bytes:
+                violations.append(
+                    f"VIOLATION: MBAP Length Mismatch. Header says {length} bytes follow, "
+                    f"but {remaining_bytes} bytes were received."
+                )
+        except (struct.error, IndexError):
+            violations.append("VIOLATION: Malformed MBAP header.")
+
+    # 4. Gap Check
+    gap_warn = check_gaps(pdu_data[1:])
+    if gap_warn:
+        violations.append(gap_warn)
+
+    return violations
