@@ -1,11 +1,15 @@
 {
   "domain": "modbus_debugger",
   "name": "Modbus Debugger",
-  "codeowners": [],
+  "codeowners": [
+    "@spjakob"
+  ],
   "config_flow": true,
-  "documentation": "https://github.com/generic/ha-modbus-debugger",
+  "documentation": "https://github.com/spjakob/ha-modbus-debugger",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/generic/ha-modbus-debugger/issues",
-  "requirements": ["pyserial"],
-  "version": "1.0.0"
+  "issue_tracker": "https://github.com/spjakob/ha-modbus-debugger/issues",
+  "requirements": [
+    "pyserial"
+  ],
+  "version": "1.0.1"
 }

@@ -24,9 +24,26 @@ Modbus communication, especially over serial (RS485), is prone to "Head-of-Line 
 
 ## Installation
 
-### manual
-1.  Copy the `custom_components/modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
-2.  Restart Home Assistant.
+### via HACS (Recommended)
+1. Ensure [HACS](https://hacs.xyz/) is installed.
+2. Go to HACS -> Integrations -> 3 dots (top right) -> Custom repositories.
+3. Paste `https://github.com/spjakob/ha-modbus-debugger` and select Category `Integration`.
+4. Click **Add**, then find **Modbus Debugger** and click **Download**.
+5. Restart Home Assistant.
+
+### Manual
+1. Copy the `custom_components/modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
+2. Restart Home Assistant.
+
+---
+
+## Technical Status
+
+> [!IMPORTANT]
+> **Independent Implementation**: This integration uses a native, synchronous Modbus driver built directly on `socket` and `pyserial`. It is **NOT** dependent on `pymodbus`, which allows for the specialized error recovery and timing analysis features.
+
+> [!WARNING]
+> **Experimental Features**: While Modbus TCP is stable, **Serial (RTU)** and **RTU-over-TCP** support are considered experimental. They require more community feedback and are not yet 100% tested across all hardware variants.
 
 ---
 
