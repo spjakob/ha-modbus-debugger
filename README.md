@@ -1,27 +1,31 @@
-# Home Assistant Modbus Debugger
+# Home Assistant Modbus Debugger: Diagnostic Toolbox
 
-A powerful and simple tool to debug Modbus devices (RTU & TCP) directly within Home Assistant.
+A robust "Diagnostic Toolbox" to troubleshoot and benchmark Modbus devices (RTU & TCP) directly within Home Assistant.
 
-This integration allows you to:
-1.  **Debug Connections**: Read raw register data from any Modbus device without creating permanent sensors first.
-2.  **View Data Formats**: Instantly see register values decoded as Int16, Int32 (Big Endian & Word Swapped), Float16, Float32, Hex, and String.
-3.  **Scan for Devices**: Scan a range of Unit IDs to discover devices on your bus.
-4.  **Create Sensors**: Easily save working queries as permanent Home Assistant sensors.
-5.  **Monitor Health**: Track success/failure statistics for each device.
+Unlike standard integrations that focus on polling, this tool is designed for **low-level bus analysis** and **device discovery**. It uses a custom synchronous driver to ensure predictable sequential communication, making it ideal for troubleshooting complex RS485 networks.
+
+## Why this integration?
+
+Modbus communication, especially over serial (RS485), is prone to "Head-of-Line Blocking" and "Pipeline Desync." This integration solves these issues with:
+- **Sequential Execution**: All requests are sent strictly one-by-one to avoid gateway congestion.
+- **Smart Drain**: Before every request, the input buffer is cleared to discard "Ghost Data" (leftovers from previous timeouts).
+- **Late Response Recovery**: If a device responds after a timeout, the scanner captures it as a "Late Recovery" result instead of misassigning the data to the next device.
+
+---
+
+## Features
+
+1.  **Read & Decode Registers**: Read raw register data and see it decoded as Int16, Int32, Float32, Hex, and Char.
+2.  **Sequential Scanning**: Discovery of Unit IDs on your bus with built-in recovery for late-responding devices.
+3.  **Stress Testing**: Benchmark device latency and success rates under heavy load to identify flaky hardware or wiring.
+4.  **Heuristic Warnings**: Get tips on non-standard ports, fast timeouts, or silent gateways.
 
 ---
 
 ## Installation
 
-### Option 1: HACS (Recommended)
-1.  Open HACS in Home Assistant.
-2.  Go to **Integrations** > **Custom repositories**.
-3.  Add the URL of this repository.
-4.  Select **Modbus Debugger** and install.
-5.  Restart Home Assistant.
-
-### Option 2: Manual
-1.  Copy the `custom_components/ha_modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
+### manual
+1.  Copy the `custom_components/modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
 2.  Restart Home Assistant.
 
 ---
@@ -35,88 +39,39 @@ This integration allows you to:
     *   **TCP**: Enter Host IP and Port (default 502).
     *   **Serial (RTU)**: Enter Port (e.g., `/dev/ttyUSB0`), Baudrate, Parity, etc.
 
-You can add multiple hubs (e.g., one TCP gateway and one local USB adapter).
-
 ---
 
-## Usage
+## Actions (Services)
 
-### 1. Debugging (Read Register)
-To read a register and check its value:
-1.  Go to **Developer Tools** > **Actions** (or Services).
-2.  Select `modbus_debugger.read_register`.
-3.  Fill in the fields:
-    *   **Hub ID**: Select your configured hub.
-    *   **Unit ID**: The Modbus Slave ID (1-247).
-    *   **Register Address**: The address to read (0-65535).
-    *   **Count**: Number of registers (default 1).
-    *   **Register Type**: Holding or Input.
-4.  Click **Perform Action**.
-5.  The result will show the raw hex values and decoded values in various formats (Int16, Float32, String, etc.).
+### 1. Read Register (`modbus_debugger.read_register`)
+Read a range of registers and view a formatted table of interpretations.
+- **Hub ID**: The configured connection profile.
+- **Unit ID**: Slave ID (1-247).
+- **Register Address**: Start address.
+- **Count**: Number of registers (auto-chunks into Modbus-compliant requests).
 
-### 2. Scanning for Devices
-To find what devices are on your bus:
-1.  Go to **Developer Tools** > **Actions**.
-2.  Select `modbus_debugger.scan_devices`.
-3.  Enter the **Start Unit ID** and **End Unit ID** (e.g., 1 to 10).
-4.  Click **Perform Action**.
-5.  The output will list all Unit IDs that responded to a read request.
+### 2. Scan Devices (`modbus_debugger.scan_devices`)
+Discover devices on the bus by checking for responses across a range of Unit IDs.
+- **Range**: Start and End Unit ID.
+- **Late Recovery**: Automatically logs if a device responded late during the scan.
 
-### 3. Creating Sensors
-Once you have identified the correct register settings:
-1.  Go to **Settings** > **Devices & Services** > **Modbus Debugger**.
-2.  Click **Configure** on your Hub.
-3.  Select **Add Sensor**.
-4.  Enter the Name, Unit ID, Register, and Data Type.
-5.  The sensor will be created (e.g., `sensor.my_voltage`) and will update automatically.
-
-## Monitoring Health
-
-For every device (Unit ID) you add sensors for, a sensor is automatically created to show the last result of the communication with the device.
-
-
+### 3. Stress Test (`modbus_debugger.stress_test_device`)
+Measure the reliability of a device by sending multiple requests in rapid succession.
+- **Iterations**: Number of requests to send (default 50).
+- **Statistics**: Returns success rate, min/max/avg latency.
 
 ---
-
-
 
 ## Development
 
-
-
-To set up a local development environment for testing:
-
-
-
-1.  **Create and activate a virtual environment:**
-
+1.  **Install test requirements:**
     ```bash
-
-    python3 -m venv .venv
-
-    source .venv/bin/activate
-
-    ```
-
-
-
-2.  **Install the test requirements:**
-
-    ```bash
-
     pip install -r requirements_test.txt
-
     ```
 
-
-
-3.  **Run the tests:**
-
+2.  **Run tests:**
     ```bash
-
-    PYTHONPATH=. pytest
-
+    python -m pytest tests/
     ```
 
-For detailed information on the test framework and integration scenarios, see [TESTING.md](TESTING.md).
-
+For detailed information on the architecture, see [TESTING.md](TESTING.md).
