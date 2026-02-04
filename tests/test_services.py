@@ -1,20 +1,39 @@
-import pytest
-import logging
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from custom_components.ha_modbus_debugger.actions import register_services, SERVICE_READ_REGISTER, SERVICE_SCAN_DEVICES
+from custom_components.ha_modbus_debugger.actions import (
+    register_services,
+    SERVICE_READ_REGISTER,
+)
 from custom_components.ha_modbus_debugger.const import DOMAIN
+
+
 async def async_test_read_register_service():
-    hass = MagicMock(); hass.data = {DOMAIN: {}}; hass.services.async_register = MagicMock()
+    hass = MagicMock()
+    hass.data = {DOMAIN: {}}
+    hass.services.async_register = MagicMock()
     hass.async_add_executor_job = AsyncMock(side_effect=lambda func, *args: func(*args))
     await register_services(hass)
-    handler = next(call[0][2] for call in hass.services.async_register.call_args_list if call[0][1] == SERVICE_READ_REGISTER)
-    entry_data = {"name": "Test Hub", "host": "127.0.0.1", "port": 502, "connection_type": "tcp"}
+    handler = next(
+        call[0][2]
+        for call in hass.services.async_register.call_args_list
+        if call[0][1] == SERVICE_READ_REGISTER
+    )
+    entry_data = {
+        "name": "Test Hub",
+        "host": "127.0.0.1",
+        "port": 502,
+        "connection_type": "tcp",
+    }
     hass.config_entries.async_get_entry.return_value = MagicMock(data=entry_data)
-    call = MagicMock(); call.data = {"hub_id": "h", "unit_id": 1, "register": 10, "count": 1}
-    with patch("custom_components.ha_modbus_debugger.actions.read.SyncModbusClient") as MC:
-        MC.return_value.execute.return_value = bytes.fromhex("021234")
+    call = MagicMock()
+    call.data = {"hub_id": "h", "unit_id": 1, "register": 10, "count": 1}
+    with patch(
+        "custom_components.ha_modbus_debugger.actions.read.SyncModbusClient"
+    ) as MC:
+        MC.return_value.execute.return_value = bytes.fromhex("1234")
         response = await handler(call)
         assert response["table"][0]["uint16"] == 0x1234
+
+
 def test_read_register_service():
     asyncio.run(async_test_read_register_service())

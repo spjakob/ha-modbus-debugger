@@ -1,15 +1,14 @@
-
 import asyncio
 import logging
 from pymodbus.server import StartAsyncTcpServer
 from pymodbus.datastore import ModbusServerContext
 from pymodbus.datastore import ModbusSequentialDataBlock
+
 try:
     from pymodbus.datastore import ModbusSlaveContext
 except ImportError:
     from pymodbus.datastore import ModbusDeviceContext as ModbusSlaveContext
 
-from pymodbus.pdu import ExceptionResponse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,6 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 # The tests run in the current loop.
 # But 'BUS = SharedBus()' creates the Lock at module level, potentially with the WRONG loop if created before test loop starts?
 # Yes, asyncio.Lock() captures the *current* loop on init. If imported before test loop, it's bound to a closed or different loop.
+
 
 class SharedBus:
     def __init__(self):
@@ -39,7 +39,9 @@ class SharedBus:
     def reset(self):
         self._lock = None
 
+
 BUS = SharedBus()
+
 
 # Custom Contexts for behaviors
 class MockSlaveContext(ModbusSlaveContext):
@@ -52,6 +54,7 @@ class MockSlaveContext(ModbusSlaveContext):
             # Minimal bus time
             return super().getValues(fc, address, count)
 
+
 class TimeoutContext(ModbusSlaveContext):
     async def async_getValues(self, fc, address, count=1):
         async with BUS.lock:
@@ -59,17 +62,20 @@ class TimeoutContext(ModbusSlaveContext):
             await asyncio.sleep(2.0)
             return super().getValues(fc, address, count)
 
+
 class SlowContext(ModbusSlaveContext):
     async def async_getValues(self, fc, address, count=1):
         async with BUS.lock:
             await asyncio.sleep(0.2)
             return super().getValues(fc, address, count)
 
+
 class ErrorContext(ModbusSlaveContext):
     async def async_getValues(self, fc, address, count=1):
         async with BUS.lock:
             # Return None to trigger server exception/empty response
             return None
+
 
 class FlakyContext(ModbusSlaveContext):
     def __init__(self, **kwargs):
@@ -83,33 +89,27 @@ class FlakyContext(ModbusSlaveContext):
                 await asyncio.sleep(2.0)
             return super().getValues(fc, address, count)
 
+
 async def run_server(port=5020):
     # ID 1: Healthy
-    c1 = MockSlaveContext(hr=ModbusSequentialDataBlock(0, [1111]*100))
+    c1 = MockSlaveContext(hr=ModbusSequentialDataBlock(0, [1111] * 100))
 
     # ID 2: Error (Illegal Address)
-    c2 = ErrorContext(hr=ModbusSequentialDataBlock(0, [2222]*100))
+    c2 = ErrorContext(hr=ModbusSequentialDataBlock(0, [2222] * 100))
 
     # ID 3: Timeout
-    c3 = TimeoutContext(hr=ModbusSequentialDataBlock(0, [3333]*100))
+    c3 = TimeoutContext(hr=ModbusSequentialDataBlock(0, [3333] * 100))
 
     # ID 4: Gateway Error
-    c4 = ErrorContext(hr=ModbusSequentialDataBlock(0, [4444]*100))
+    c4 = ErrorContext(hr=ModbusSequentialDataBlock(0, [4444] * 100))
 
     # ID 5: Slow
-    c5 = SlowContext(hr=ModbusSequentialDataBlock(0, [5555]*100))
+    c5 = SlowContext(hr=ModbusSequentialDataBlock(0, [5555] * 100))
 
     # ID 6: Flaky
-    c6 = FlakyContext(hr=ModbusSequentialDataBlock(0, [123]*100))
+    c6 = FlakyContext(hr=ModbusSequentialDataBlock(0, [123] * 100))
 
-    store = {
-        1: c1,
-        2: c2,
-        3: c3,
-        4: c4,
-        5: c5,
-        6: c6
-    }
+    store = {1: c1, 2: c2, 3: c3, 4: c4, 5: c5, 6: c6}
 
     context = ModbusServerContext(store, single=False)
 
@@ -119,6 +119,7 @@ async def run_server(port=5020):
         address=address,
     )
     return server
+
 
 if __name__ == "__main__":
     asyncio.run(run_server())

@@ -238,7 +238,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_edit_connection(self, user_input=None):
         """Edit connection settings."""
-        connection_type = self._config_entry.data.get(CONF_CONNECTION_TYPE, CONNECTION_TYPE_TCP)
+        connection_type = self._config_entry.data.get(
+            CONF_CONNECTION_TYPE, CONNECTION_TYPE_TCP
+        )
 
         if user_input is not None:
             # We must update the main config entry data

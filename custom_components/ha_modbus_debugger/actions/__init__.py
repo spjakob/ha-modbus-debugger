@@ -1,4 +1,5 @@
 """Actions Registry."""
+
 from homeassistant.core import HomeAssistant, SupportsResponse
 from .scan import scan_devices
 from .read import read_register
@@ -8,6 +9,7 @@ from ..const import DOMAIN
 SERVICE_SCAN_DEVICES = "scan_devices"
 SERVICE_READ_REGISTER = "read_register"
 SERVICE_STRESS_TEST = "stress_test_device"
+
 
 async def register_services(hass: HomeAssistant):
     """Register Modbus Debugger services."""
