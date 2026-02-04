@@ -1,122 +1,29 @@
-# Home Assistant Modbus Debugger
+# Modbus Diagnostic Toolbox
 
-A powerful and simple tool to debug Modbus devices (RTU & TCP) directly within Home Assistant.
+A specialized Home Assistant integration designed for robust Modbus debugging and bus analysis. Unlike standard Modbus integrations that focus on persistent sensor polling, this toolbox provides high-level diagnostic actions with built-in self-healing capabilities for complex serial-over-TCP environments.
 
-This integration allows you to:
-1.  **Debug Connections**: Read raw register data from any Modbus device without creating permanent sensors first.
-2.  **View Data Formats**: Instantly see register values decoded as Int16, Int32 (Big Endian & Word Swapped), Float16, Float32, Hex, and String.
-3.  **Scan for Devices**: Scan a range of Unit IDs to discover devices on your bus.
-4.  **Create Sensors**: Easily save working queries as permanent Home Assistant sensors.
-5.  **Monitor Health**: Track success/failure statistics for each device.
+## Features
 
----
+- **Actions-Only Provider**: Lightweight integration that only provides diagnostic services, avoiding background polling overhead.
+- **Custom Synchronous Core**: Uses a specialized synchronous driver to prevent "Head-of-Line Blocking" common in async RS485 gateways.
+- **Smart Drain**: Automatically clears "Ghost Data" from previous timeouts before sending new requests.
+- **Late Response Recovery**: Captures and identifies delayed responses from slow devices, preventing pipeline desynchronization.
+- **Address Book Config Flow**: Save connection profiles for multiple gateways and reference them by hub ID in diagnostic actions.
+- **Advanced Heuristics**: Automatic warnings for non-standard ports, aggressive timeouts, and silent buses.
 
-## Installation
+## Services
 
-### Option 1: HACS (Recommended)
-1.  Open HACS in Home Assistant.
-2.  Go to **Integrations** > **Custom repositories**.
-3.  Add the URL of this repository.
-4.  Select **Modbus Debugger** and install.
-5.  Restart Home Assistant.
+### `scan_devices`
+Scans a range of Unit IDs on the bus. Captures late responses and reports found devices along with latency and status.
 
-### Option 2: Manual
-1.  Copy the `custom_components/ha_modbus_debugger` folder to your Home Assistant `config/custom_components/` directory.
-2.  Restart Home Assistant.
+### `read_register`
+Reads registers from a specific device and formats the data into a comprehensive table showing multiple data types (Int16, UInt16, Float32, etc.) simultaneously.
 
----
+### `stress_test_device`
+Performs multiple rapid-fire requests to a device to analyze success rates and average latency under load.
 
-## Configuration
-
-1.  Go to **Settings** > **Devices & Services**.
-2.  Click **Add Integration**.
-3.  Search for **Modbus Debugger**.
-4.  Choose your connection type:
-    *   **TCP**: Enter Host IP and Port (default 502).
-    *   **Serial (RTU)**: Enter Port (e.g., `/dev/ttyUSB0`), Baudrate, Parity, etc.
-
-You can add multiple hubs (e.g., one TCP gateway and one local USB adapter).
-
----
-
-## Usage
-
-### 1. Debugging (Read Register)
-To read a register and check its value:
-1.  Go to **Developer Tools** > **Actions** (or Services).
-2.  Select `modbus_debugger.read_register`.
-3.  Fill in the fields:
-    *   **Hub ID**: Select your configured hub.
-    *   **Unit ID**: The Modbus Slave ID (1-247).
-    *   **Register Address**: The address to read (0-65535).
-    *   **Count**: Number of registers (default 1).
-    *   **Register Type**: Holding or Input.
-4.  Click **Perform Action**.
-5.  The result will show the raw hex values and decoded values in various formats (Int16, Float32, String, etc.).
-
-### 2. Scanning for Devices
-To find what devices are on your bus:
-1.  Go to **Developer Tools** > **Actions**.
-2.  Select `modbus_debugger.scan_devices`.
-3.  Enter the **Start Unit ID** and **End Unit ID** (e.g., 1 to 10).
-4.  Click **Perform Action**.
-5.  The output will list all Unit IDs that responded to a read request.
-
-### 3. Creating Sensors
-Once you have identified the correct register settings:
-1.  Go to **Settings** > **Devices & Services** > **Modbus Debugger**.
-2.  Click **Configure** on your Hub.
-3.  Select **Add Sensor**.
-4.  Enter the Name, Unit ID, Register, and Data Type.
-5.  The sensor will be created (e.g., `sensor.my_voltage`) and will update automatically.
-
-## Monitoring Health
-
-For every device (Unit ID) you add sensors for, a sensor is automatically created to show the last result of the communication with the device.
-
-
-
----
-
-
+## Core Rationale: Sequential vs. Async
+Standard Modbus TCP clients often fail on RS485 gateways when multiple requests are queued. This integration solves this by enforcing strict sequential execution and implementing a "Read-Until-Match" strategy that can recover responses even if they arrive out-of-sync with the current request.
 
 ## Development
-
-
-
-To set up a local development environment for testing:
-
-
-
-1.  **Create and activate a virtual environment:**
-
-    ```bash
-
-    python3 -m venv .venv
-
-    source .venv/bin/activate
-
-    ```
-
-
-
-2.  **Install the test requirements:**
-
-    ```bash
-
-    pip install -r requirements_test.txt
-
-    ```
-
-
-
-3.  **Run the tests:**
-
-    ```bash
-
-    PYTHONPATH=. pytest
-
-    ```
-
-For detailed information on the test framework and integration scenarios, see [TESTING.md](TESTING.md).
-
+See `DEVELOPMENT.TXT` for a deep dive into the architecture and technical rationale.
