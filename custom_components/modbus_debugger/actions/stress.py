@@ -7,7 +7,7 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from homeassistant.exceptions import ServiceValidationError
 from ..modbus_core.exceptions import ModbusError, ModbusTimeoutError
-from ..modbus_core.heuristics import check_fast_response
+from ..modbus_core.heuristics import check_fast_response, analyze_error_cause, analyze_connection_error
 from ..helpers.formatting import TraceLogger
 from ..helpers.connection import get_client, get_config_entry
 
@@ -47,7 +47,21 @@ def _run_stress_sync(
     total_bytes = 0
 
     try:
-        client.connect()
+        try:
+            client.connect()
+        except Exception as e:
+            hint = analyze_connection_error(e)
+            if hint:
+                _LOGGER.error("Connection failed: %s", hint)
+                trace.log(f"Connection failed: {hint}")
+                return {
+                     "success_rate": 0,
+                     "error_count": 1,
+                     "trace": trace.get_trace(),
+                     "error": f"Connection Failed: {hint}"
+                }
+            raise e # Re-raise if not a connection error (e.g. unexpected)
+
         # Initial connection check?
         
         for i in range(iterations):
@@ -137,11 +151,26 @@ def _run_stress_sync(
         f"Success: {success_rate:.1f}%"
     )
     
+    
     # Heuristics
-    fast_warn = check_fast_response(avg_latency * 1000)
-    if fast_warn:
-         trace.log(fast_warn)
-         _LOGGER.warning(fast_warn)
+    if success_count > 0:
+        fast_warn = check_fast_response(avg_latency * 1000)
+        if fast_warn:
+             trace.log(fast_warn)
+             _LOGGER.warning(fast_warn)
+    elif error_count == 0 and timeout_count > 0:
+        # All timeouts? Analyze cause based on last exception if available?
+        # Typically stress test catches exceptions in loop.
+        # But we don't save the exception object in the loop variables easily.
+        # We can just use a generic "Timeout" message or save the last error.
+        # Wait, I didn't save last error.
+        # I rely on 'timeout_count' which implies ModbusTimeoutError.
+        # So I can pass a dummy ModbusTimeoutError to analyze_error_cause
+        # OR just call analyze_error_cause with a constructed exception string.
+        # But analyze_error_cause takes Exception.
+        
+        warn = analyze_error_cause(ModbusTimeoutError("Stress Test All Timeouts"))
+        trace.log(warn)
 
     trace.log(completion_msg)
     _LOGGER.info(completion_msg)

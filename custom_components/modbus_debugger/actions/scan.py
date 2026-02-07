@@ -16,6 +16,8 @@ from ..modbus_core.heuristics import (
     check_non_standard_port,
     check_silent_gateway,
     check_ghost_data,
+    analyze_error_cause,
+    analyze_connection_error,
 )
 from ..helpers.formatting import TraceLogger
 from ..helpers.connection import get_client, get_config_entry
@@ -98,7 +100,19 @@ def _run_scan_sync(
     ghost_count = 0
 
     try:
-        client.connect()
+        try:
+            client.connect()
+        except Exception as e:
+            hint = analyze_connection_error(e)
+            if hint:
+                log(f"Connection failed: {hint}", level="error")
+                return {
+                     "found_devices": [],
+                     "trace": trace.get_trace(),
+                     "count": 0,
+                     "error": f"Connection Failed: {hint}"
+                }
+            raise e
 
         fc = reg_type_code
         req_data = struct.pack(">HH", register, 1)  # Read 1 register at 'register'
@@ -243,6 +257,20 @@ def _run_scan_sync(
     # duration is calculated outside in async wrapper, but we can't access it here easily for logging inside _run.
     # We'll just log scanned/found here.
     log(f"Scan Complete. Scanned: {total_scanned}, Found: {total_found}.", level="info")
+    
+    if total_found == 0 and error_count > 0:
+        # No devices found, but errors occurred. Give a hint.
+        # Use a generic error for analysis or try to capture the last error type?
+        # We can use a generic ModbusTimeoutError if we saw timeouts, 
+        # or just specific advice if we saw exceptions.
+        # Simple approach: If timeouts > 0, check Timeout.
+        hint = ""
+        has_timeout = any(r['status'] == 'timeout' for r in scan_results)
+        if has_timeout:
+             hint = analyze_error_cause(ModbusTimeoutError("Scan Timeouts"))
+        
+        if hint:
+             log(f"Hint: {hint}", level="warning")
 
     return {
         "found_devices": sorted(found_devices, key=lambda x: x.get("slave_id", 0)),
