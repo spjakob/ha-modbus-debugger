@@ -333,64 +333,130 @@ def _run_smart_scan(
         confirmed_id = None
 
         # Phase 1: Fire & Listen
-        log("Phase 1: Rapid Fire...", level="info")
+        log("Phase 1: Rapid Fire (Sends all)...", level="info")
+        
+        # We need to process responses constantly to avoid buffer overflow? 
+        # Or just rely on OS buffer (usually 10s of KB, enough for 255 small packets).
         
         for slave_id in range(start_slave, end_slave + 1):
-            if confirmed_id is not None:
-                break
-            
             # Send (Non-blocking)
             client.send_raw_request(slave_id, reg_type_code, req_data)
             
-            # Quick Peek (5ms)
-            # If a device is fast, we catch it here.
-            # If not, we catch it in a future iteration or the tail wait.
+            # Quick Peek (Non-blocking) to see if anything arrived early
+            # This helps detecting early responses but we DO NOT STOP sending.
             try:
-                resp = client.recv_raw_response(0.005)
+                resp = client.recv_raw_response(0.0) # Non-blocking check
                 if resp:
                     resp_id, _, _, _ = resp
-                    log(f"Activity detected on Slave {resp_id}!", level="warning")
-                    confirmed_id = resp_id
-                    break
+                    if confirmed_id is None:
+                         log(f"Activity detected on Slave {resp_id} (During Fire)!", level="warning")
+                         confirmed_id = resp_id
+                         # We keep sending!
             except Exception:
-                pass # Ignore errors during scan phase
+                pass
 
-        # Phase 2: Tail Wait
+
+        # Phase 2: Tail Listen (Wait for responses if we haven't seen any, or just catch up)
+        # We need to give time for the LAST packet to round-trip if it was the valid one.
+        # But we also want to send the Marker AS SOON AS POSSIBLE if we already have a candidate.
+        
+        start_tail = time.perf_counter()
+        
+        # If we haven't found anyone yet, wait up to timeout to find SOMEONE.
+        # If we HAVE found someone, we can proceed to Marker immediately? 
+        # No, because the gateway might still be busy processing the valid request's response.
+        
         if confirmed_id is None:
-            log("Phase 2: Waiting for stragglers...", level="info")
-            start_wait = time.perf_counter()
-            # Wait for 1x timeout period to catch any stragglers
-            while (time.perf_counter() - start_wait) < timeout:
+             log("Phase 2: Waiting for stragglers...", level="info")
+             while (time.perf_counter() - start_tail) < timeout:
                 try:
-                    resp = client.recv_raw_response(0.1) # Check every 100ms
+                    resp = client.recv_raw_response(0.1)
                     if resp:
                         resp_id, _, _, _ = resp
-                        log(f"Activity detected on Slave {resp_id} (Tail)!", level="warning")
-                        confirmed_id = resp_id
-                        break
+                        if confirmed_id is None:
+                            log(f"Activity detected on Slave {resp_id} (Tail)!", level="warning")
+                            confirmed_id = resp_id
+                            break # Found one!
                 except Exception:
                     pass
 
-        # Phase 3: Verify & Flush
+        # Phase 3: Marker & Flush
         if confirmed_id is not None:
-            log(f"Phase 3: Verifying Slave {confirmed_id} with Standard Request...", level="info")
-            # This calls execute(), which uses smart_drain to clear the buffer of any 
-            # other responses we triggered, ensuring a clean sync.
-            try:
-                # We need to use the method arguments properly
-                resp = client.execute(confirmed_id, reg_type_code, req_data)
-                
-                # Parse value
-                val = 0
-                if len(resp) >= 3:
-                     val = struct.unpack(">H", resp[1:3])[0]
-                
-                log(f"Slave {confirmed_id} CONFIRMED! Value: {val}", level="info")
-                found_devices.append({"slave_id": confirmed_id, "value": val, "note": "Smart Scan"})
-            except Exception as e:
-                log(f"Verification failed for {confirmed_id}: {e}", level="warning")
+            log(f"Phase 3: Sending Marker to Slave {confirmed_id} and Flushing...", level="info")
+            
+            # 1. Send Marker (Standard Request, but raw so we can control read loop)
+            # Use a different transaction ID or specific data if needed? 
+            # We just use a standard read.
+            client.send_raw_request(confirmed_id, reg_type_code, req_data)
+            marker_sent_time = time.perf_counter()
+            
+            # 2. Flush Loop: Read until we get OUR Marker response.
+            # We assume the gateway processes strictly in order. 
+            # All previous requests (from Phase 1) that successfully got a reply will arrive BEFORE our Marker.
+            # Any request that timed out on the gateway side will just NOT send a reply (silent).
+            
+            log("Waiting for Marker Reply...", level="debug")
+            while (time.perf_counter() - marker_sent_time) < (timeout * 2): # Double timeout for safety
+                try:
+                    # We use a blocking read here because we EXPECT data.
+                    # But we also need to handle "ghosts" (responses to Phase 1 requests).
+                    
+                    resp = client.recv_raw_response(0.5)
+                    if resp:
+                        resp_id, _, resp_val_bytes, _ = resp
+                        
+                        # Is this our Marker?
+                        # Heuristic: It matches our confirmed_id.
+                        # Problem: Phase 1 request to confirmed_id ALSO matches confirmed_id!
+                        # How to distinguish Phase 1 reply vs Marker reply?
+                        # TCP: Transaction ID.
+                        # RTU: We can't easily distinguish if request data is identical.
+                        # WORKAROUND: We assume Phase 1 reply arrived ALREADY or will arrive very soon.
+                        # Actually, if we get TWO replies from confirmed_id, the *second* one is definitely the marker 
+                        # (assuming Phase 1 sent only one).
+                        # Implication: We need to count replies from confirmed_id?
+                        
+                        # Simpler: If the response is valid, we update our "Found" status.
+                        # We just process everything until timeout or... until we feel "done"?
+                        # User logic: "When we receive a second reply from that device, then our scan is complete."
+                        
+                        val = 0
+                        if len(resp_val_bytes) >= 2:
+                             val = struct.unpack(">H", resp_val_bytes[0:2])[0] # recv_raw returns data (bytes)
+                        
+                        # Store/Update result
+                        # If we already have this device in found_devices, maybe just update?
+                        # Smart Scan only cares about finding it.
+                        
+                        # Log it
+                        log(f"Flush: RX from {resp_id} (Val {val})", level="debug")
+                        
+                        # Check redundancy to detect Marker
+                        # Ideally we check Transaction ID if TCP.
+                        # If RTU, we just count.
+                        
+                        is_new = True
+                        for d in found_devices:
+                            if d["slave_id"] == resp_id:
+                                is_new = False
+                                d["count"] = d.get("count", 1) + 1
+                                if d["count"] >= 2:
+                                    log("Marker Reply Confirmed! Scan Complete.", level="info")
+                                    return {"found_devices": found_devices, "trace": trace.get_trace(), "count": len(found_devices)}
+                                break
+                        
+                        if is_new:
+                             found_devices.append({"slave_id": resp_id, "value": val, "note": " Smart Scan", "count": 1})
+                             # If this was the First reply from this ID (Phase 1 reply), we keep waiting for Marker.
+                    
+                except Exception as e:
+                     # Ignore timeouts in flush loop, keep waiting for marker
+                     pass
+                     
+            log("Marker Wait Timed Out. (Device might have timed out on Marker request too)", level="warning")
+
         else:
-            log("No active devices found.", level="info")
+            log("No active devices found in range.", level="info")
 
     except Exception as e:
         log(f"Critical Scan Error: {e}", level="error")

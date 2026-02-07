@@ -25,7 +25,9 @@ Read raw data from a device and see it decoded instantly (Int16, Float32, Hex, e
 ### 2. Scan Devices (`modbus_debugger.scan_devices`)
 Iterate through a range of Slave IDs to find active devices.
 - **Range**: Start and End Slave ID.
-- **Heuristics**: Warns if a scan returns 0 devices due to timeouts or connection errors (e.g., "Check Slave ID" vs "Check IP").
+- **Scan Mode**:
+    - **Standard**: Sequential, safe scan (wait for timeout on each).
+    - **Smart**: Rapidly scans the entire range to detect active devices much faster than the standard method.
 
 ### 3. Stress Test (`modbus_debugger.stress_test`)
 Hammer a device with requests to verify stability.
