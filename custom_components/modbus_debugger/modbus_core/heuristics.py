@@ -43,3 +43,13 @@ def check_ghost_data(ghost_count: int, timeout: float) -> str | None:
             "the scanner has moved on."
         )
     return None
+
+
+def check_fast_response(latency_ms: float) -> str | None:
+    """Check for suspiciously fast response (Caching)."""
+    if latency_ms < 3.0:
+        return (
+            f"⚠️ Extremely fast response detected ({latency_ms:.2f}ms). "
+            "This usually indicates the Gateway is serving cached data."
+        )
+    return None

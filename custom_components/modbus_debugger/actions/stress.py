@@ -1,4 +1,5 @@
-"""Stress Test Action."""
+"""Stress Test Action (Latency measurement, Throughput, Caching checks)."""
+
 
 import time
 import struct
@@ -6,6 +7,7 @@ import logging
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from homeassistant.exceptions import ServiceValidationError
 from ..modbus_core.exceptions import ModbusError, ModbusTimeoutError
+from ..modbus_core.heuristics import check_fast_response
 from ..helpers.formatting import TraceLogger
 from ..helpers.connection import get_client, get_config_entry
 
@@ -13,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _run_stress_sync(
-    config_data, slave_id, register, count, reg_type_code, iterations, timeout, retries, verbosity
+    config_data, slave_id, register, count, reg_type_code, iterations, timeout, retries, verbosity, alternate
 ):
     trace = TraceLogger()
     target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
@@ -59,6 +61,10 @@ def _run_stress_sync(
 
             remaining = count
             current_addr = register
+            # Alternating Logic: If enabled, toggle between register and register+1
+            if alternate and (i % 2 == 1):
+                current_addr = register + 1
+
             iter_bytes = 0
             
             try:
@@ -130,6 +136,13 @@ def _run_stress_sync(
         f"Completed {iterations} iterations in {total_duration:.2f}s. "
         f"Success: {success_rate:.1f}%"
     )
+    
+    # Heuristics
+    fast_warn = check_fast_response(avg_latency * 1000)
+    if fast_warn:
+         trace.log(fast_warn)
+         _LOGGER.warning(fast_warn)
+
     trace.log(completion_msg)
     _LOGGER.info(completion_msg)
 
@@ -159,4 +172,5 @@ async def stress_test(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
         float(call.data.get("timeout", 2.0)),
         int(call.data.get("retries", 0)),
         call.data.get("verbosity", "basic"),
+        call.data.get("alternate", False),
     )

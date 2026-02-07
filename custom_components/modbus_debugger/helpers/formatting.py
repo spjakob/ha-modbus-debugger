@@ -1,4 +1,5 @@
-"""Formatting helpers for Modbus Debugger."""
+"""Formatting helpers for Modbus Debugger (TraceLogger, TableFormatter)."""
+
 
 import struct
 

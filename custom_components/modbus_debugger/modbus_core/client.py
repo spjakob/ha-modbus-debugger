@@ -1,4 +1,5 @@
-"""Synchronous Modbus Client."""
+"""Synchronous Modbus Client handling TCP, RTU, and RTU-over-TCP."""
+
 
 import socket
 import time
@@ -11,6 +12,7 @@ from .protocol import (
     parse_mbap_header,
     validate_rtu_crc,
     parse_response_pdu,
+    decode_packet_string,
 )
 from .exceptions import (
     ModbusConnectionError,
@@ -145,7 +147,7 @@ class SyncModbusClient:
 
         # 3. Send
         if self.trace_callback:
-            self.trace_callback(f"TX: {req.hex().upper()}")
+            self.trace_callback(f"TX: {decode_packet_string(req)}")
 
         start_time = time.monotonic()
         try:
@@ -178,7 +180,7 @@ class SyncModbusClient:
                     )
 
                 if self.trace_callback:
-                    self.trace_callback(f"RX: {raw_frame.hex().upper()}")
+                    self.trace_callback(f"RX: {decode_packet_string(raw_frame)}")
 
                 # Check match
                 if resp_unit == slave_id:

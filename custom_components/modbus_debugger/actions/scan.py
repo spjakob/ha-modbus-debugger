@@ -1,4 +1,5 @@
-"""Scan Devices Action."""
+"""Scan Devices Action (Synchronous execution with heuristics)."""
+
 
 import time
 import logging

@@ -1,4 +1,5 @@
-"""Read Register Action."""
+"""Read Register Action (Synchronous execution)."""
+
 
 import logging
 import struct
