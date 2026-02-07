@@ -375,8 +375,8 @@ class SyncModbusClient:
 
     def send_raw_request(self, slave_id: int, function_code: int, data: bytes):
         """Send a raw request without waiting for response (For Smart Scan)."""
-        if not self._socket and not self._serial:
-            self.connect()
+        # Note: We rely on external connection management. 
+        # If not connected, we raise error below.
 
         self._transaction_id = (self._transaction_id + 1) & 0xFFFF
 
@@ -396,6 +396,8 @@ class SyncModbusClient:
                 self._socket.sendall(req)
             elif self._serial:
                 self._serial.write(req)
+            else:
+                raise ModbusConnectionError("Client not connected")
         except Exception as e:
             _LOGGER.error("Send Raw failed: %s", e)
             self.close()
