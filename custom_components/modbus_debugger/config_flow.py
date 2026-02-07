@@ -54,6 +54,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         self._name = user_input[CONF_NAME]
+        if not self._name:
+             self._name = "Modbus Debugger"
+
         if user_input[CONF_CONNECTION_TYPE] == CONNECTION_TYPE_TCP:
             return await self.async_step_tcp()
         return await self.async_step_serial()
@@ -140,7 +143,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""
-        return await self.async_step_menu()
+        return await self.async_step_edit_connection()
 
     async def async_step_menu(self, user_input=None):
         """Show the menu."""
