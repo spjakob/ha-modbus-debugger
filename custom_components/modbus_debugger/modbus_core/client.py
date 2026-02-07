@@ -369,7 +369,61 @@ class SyncModbusClient:
             return data
         else:
             # Serial read
-            data = reader_func(n)
             if len(data) < n:
                 raise ModbusTimeoutError("Incomplete read")
             return data
+
+    def send_raw_request(self, slave_id: int, function_code: int, data: bytes):
+        """Send a raw request without waiting for response (For Smart Scan)."""
+        if not self._socket and not self._serial:
+            self.connect()
+
+        self._transaction_id = (self._transaction_id + 1) & 0xFFFF
+
+        # Build Request
+        if self.connection_type == "tcp" and not self.rtu_over_tcp:
+            req = build_tcp_request(self._transaction_id, slave_id, function_code, data)
+        else:
+            req = build_rtu_request(slave_id, function_code, data)
+        
+        # Log TX
+        if self.trace_callback:
+            self.trace_callback(f"TX: {decode_packet_string(req)}")
+
+        # Send
+        try:
+            if self._socket:
+                self._socket.sendall(req)
+            elif self._serial:
+                self._serial.write(req)
+        except Exception as e:
+            _LOGGER.error("Send Raw failed: %s", e)
+            self.close()
+            raise ModbusConnectionError(f"Send failed: {e}")
+
+    def recv_raw_response(self, timeout: float) -> tuple[int, int, bytes, bytes] | None:
+        """Receive a single raw response (or None if timeout/empty)."""
+        if not self._socket and not self._serial:
+            return None
+
+        # Try to read one packet
+        try:
+            if self.connection_type == "tcp" and not self.rtu_over_tcp:
+                resp_unit, resp_fc, resp_data, raw_frame = self._read_packet_tcp(timeout)
+            else:
+                resp_unit, resp_fc, resp_data, raw_frame = self._read_packet_rtu(timeout)
+            
+            # Log RX
+            if self.trace_callback:
+                self.trace_callback(f"RX: {decode_packet_string(raw_frame)}")
+                
+            return resp_unit, resp_fc, resp_data, raw_frame
+
+        except (ModbusTimeoutError, TimeoutError, socket.timeout):
+            return None
+        except Exception as e:
+            # Other errors (CRC, etc) might be raised, or we could return None?
+            # Smart Scan should probably know about CRC errors.
+            # Reraise ModbusInvalidResponseError but wrap others?
+            # Let's reraise known ModbusErrors so scan can log them.
+            raise e

@@ -279,6 +279,132 @@ def _run_scan_sync(
     }
 
 
+def _run_smart_scan(
+    config_data,
+    start_slave,
+    end_slave,
+    register,
+    reg_type_code,
+    timeout,
+    retries,
+    verbosity,
+    log_to_file,
+):
+    """Smart Scan: Fire & Flush (Find First)."""
+    trace = TraceLogger()
+    show_trace = verbosity in ["detailed", "debug"]
+    show_debug = verbosity == "debug"
+
+    def log(msg, level="info"):
+        if log_to_file or level in ["warning", "error"]:
+            if level == "error":
+                _LOGGER.error(msg)
+            elif level == "warning":
+                _LOGGER.warning(msg)
+            elif level == "debug":
+                _LOGGER.debug(msg)
+            else:
+                _LOGGER.info(msg)
+        if level in ["error", "warning"] or show_trace:
+            if level == "debug" and not show_debug:
+                return
+            trace.log(msg)
+
+    target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
+    log(f"Starting SMART Scan (Fire & Flush) on {target}. Range {start_slave}-{end_slave}.", level="info")
+
+    client = get_client(config_data, timeout, retries)
+    if show_debug:
+        client.trace_callback = lambda m: log(m, level="debug")
+
+    found_devices = []
+    
+    try:
+        try:
+            client.connect()
+        except Exception as e:
+            hint = analyze_connection_error(e)
+            if hint:
+                log(f"Connection failed: {hint}", level="error")
+                return {"found_devices": [], "trace": trace.get_trace(), "error": f"Connection Failed: {hint}"}
+            raise e
+
+        req_data = struct.pack(">HH", register, 1)
+        confirmed_id = None
+
+        # Phase 1: Fire & Listen
+        log("Phase 1: Rapid Fire...", level="info")
+        
+        for slave_id in range(start_slave, end_slave + 1):
+            if confirmed_id is not None:
+                break
+            
+            # Send (Non-blocking)
+            client.send_raw_request(slave_id, reg_type_code, req_data)
+            
+            # Quick Peek (5ms)
+            # If a device is fast, we catch it here.
+            # If not, we catch it in a future iteration or the tail wait.
+            try:
+                resp = client.recv_raw_response(0.005)
+                if resp:
+                    resp_id, _, _, _ = resp
+                    log(f"Activity detected on Slave {resp_id}!", level="warning")
+                    confirmed_id = resp_id
+                    break
+            except Exception:
+                pass # Ignore errors during scan phase
+
+        # Phase 2: Tail Wait
+        if confirmed_id is None:
+            log("Phase 2: Waiting for stragglers...", level="info")
+            start_wait = time.perf_counter()
+            # Wait for 1x timeout period to catch any stragglers
+            while (time.perf_counter() - start_wait) < timeout:
+                try:
+                    resp = client.recv_raw_response(0.1) # Check every 100ms
+                    if resp:
+                        resp_id, _, _, _ = resp
+                        log(f"Activity detected on Slave {resp_id} (Tail)!", level="warning")
+                        confirmed_id = resp_id
+                        break
+                except Exception:
+                    pass
+
+        # Phase 3: Verify & Flush
+        if confirmed_id is not None:
+            log(f"Phase 3: Verifying Slave {confirmed_id} with Standard Request...", level="info")
+            # This calls execute(), which uses smart_drain to clear the buffer of any 
+            # other responses we triggered, ensuring a clean sync.
+            try:
+                # We need to use the method arguments properly
+                resp = client.execute(confirmed_id, reg_type_code, req_data)
+                
+                # Parse value
+                val = 0
+                if len(resp) >= 3:
+                     val = struct.unpack(">H", resp[1:3])[0]
+                
+                log(f"Slave {confirmed_id} CONFIRMED! Value: {val}", level="info")
+                found_devices.append({"slave_id": confirmed_id, "value": val, "note": "Smart Scan"})
+            except Exception as e:
+                log(f"Verification failed for {confirmed_id}: {e}", level="warning")
+        else:
+            log("No active devices found.", level="info")
+
+    except Exception as e:
+        log(f"Critical Scan Error: {e}", level="error")
+    finally:
+        client.close()
+
+    return {
+        "found_devices": found_devices,
+        "trace": trace.get_trace(),
+        "count": len(found_devices),
+    }
+
+
+
 async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
     """Handle the scan_devices service."""
     hub_id = call.data.get("hub_id")
@@ -292,13 +418,16 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     retries = int(call.data.get("retries", 0))
     verbosity = call.data.get("verbosity", "basic")
     log_to_file = call.data.get("log_to_file", False)
+    scan_mode = call.data.get("scan_mode", "standard")
 
     reg_type_code = 3 if register_type == "holding" else 4
 
     start_time = time.perf_counter()
 
+    target_func = _run_smart_scan if scan_mode == "smart" else _run_scan_sync
+
     result = await hass.async_add_executor_job(
-        _run_scan_sync,
+        target_func,
         entry.data,
         start_slave,
         end_slave,
@@ -313,5 +442,6 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     duration = time.perf_counter() - start_time
     result["scan_duration"] = duration
     result["scanned_range"] = f"{start_slave}-{end_slave}"
+    result["mode"] = scan_mode
 
     return result

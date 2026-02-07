@@ -199,6 +199,18 @@ scan_devices:
       default: false
       selector:
         boolean: {}
+    scan_mode:
+      name: Scan Mode
+      description: "Standard: Sequential safe scan. Smart: Rapid-fire pipelined scan (Finds first device)."
+      required: false
+      default: standard
+      selector:
+        select:
+          options:
+            - label: Standard (Sequential)
+              value: standard
+            - label: Smart (Fast Pipelined)
+              value: smart
 
 stress_test_device:
   name: Stress Test Device
