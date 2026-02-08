@@ -158,66 +158,6 @@ def validate_response(
     return violations
 
 
-def decode_packet_string(data: bytes) -> str:
-    """
-    Decode a raw Modbus packet into a human-readable string.
-    Always includes the raw hex at the end for safety.
-    """
-    raw_hex = data.hex().upper()
-    try:
-        # PDU Handling logic (Simplified for readability)
-        # We need to guess if it's TCP or RTU to find PDU start.
-        # But this is hard without context.
-        # Let's focus on simple PDU decoding if possible.
-        
-        # Heuristic: Check for common FCs at likely offsets
-        
-        fc = 0
-        pdu = b''
-        
-        # Try TCP (Header 7 bytes usually: TID(2) PID(2) LEN(2) UID(1))
-        # Valid Modbus TCP header has PID=0
-        if len(data) > 7 and data[2] == 0 and data[3] == 0:
-             pdu = data[7:]
-        # Try RTU (Addr(1) PDU... CRC(2))
-        elif len(data) > 3:
-             pdu = data[1:-2]
-        
-        if not pdu:
-            return f"{raw_hex}"
-
-        fc = pdu[0]
-        summary = ""
-
-        if fc == 3: # Read Holding
-            # Request: [FC][AddrHi][AddrLo][CountHi][CountLo] (5 bytes)
-            if len(pdu) == 5:
-                addr = struct.unpack(">H", pdu[1:3])[0]
-                count = struct.unpack(">H", pdu[3:5])[0]
-                summary = f"ReadHolding(Addr={addr}, Cnt={count})"
-            # Response: [FC][Bytes][Data...]
-            elif len(pdu) >= 2:
-                 byte_count = pdu[1]
-                 # Peek at first register value if available
-                 val_str = ""
-                 if byte_count >= 2 and len(pdu) >= 4:
-                     val = struct.unpack(">H", pdu[2:4])[0]
-                     val_str = f", 1st={val}"
-                 summary = f"ReadHoldingResp(Bytes={byte_count}{val_str})"
-        
-        elif fc & 0x80: # Exception
-             if len(pdu) >= 2:
-                 code = pdu[1]
-                 summary = f"Exception(Code={code})"
-
-        if summary:
-             return f"{summary} [{raw_hex}]"
-        
-        return f"{raw_hex}"
-
-    except Exception:
-        # Fallback to raw hex if decoding fails
-        return f"Raw(DecodeErr): {raw_hex}"
 
 
 def decode_packet_string(data: bytes) -> str:

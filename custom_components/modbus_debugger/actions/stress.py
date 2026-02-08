@@ -198,5 +198,4 @@ async def stress_test(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
         float(call.data.get("timeout", 2.0)),
         int(call.data.get("retries", 0)),
         call.data.get("verbosity", "basic"),
-    call.data.get("verbosity", "basic"),
     )

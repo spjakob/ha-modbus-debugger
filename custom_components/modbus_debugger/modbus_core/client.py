@@ -369,6 +369,7 @@ class SyncModbusClient:
             return data
         else:
             # Serial read
+            data = self._serial.read(n)
             if len(data) < n:
                 raise ModbusTimeoutError("Incomplete read")
             return data

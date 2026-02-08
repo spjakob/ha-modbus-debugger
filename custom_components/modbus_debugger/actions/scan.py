@@ -361,8 +361,8 @@ def _run_smart_scan(
                         log(f"Activity detected on Slave {resp_id} (Tail)!", level="warning")
                         confirmed_id = resp_id
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                log(f"Tail Error: {e}", level="debug")
 
         # Phase 3: Marker & Flush
         if confirmed_id is not None:
@@ -395,8 +395,8 @@ def _run_smart_scan(
                             log("Marker Reply Confirmed! Scan Complete.", level="info")
                             return {"found_devices": found_devices, "trace": trace.get_trace(), "count": len(found_devices)}
                     
-                except Exception:
-                     pass
+                except Exception as e:
+                     log(f"Flush Error: {e}", level="debug")
         else:
             log("No active devices found in range.", level="info")
 
