@@ -1,11 +1,12 @@
-"""Read Register Action."""
+"""Read Register Action (Synchronous execution)."""
+
 
 import logging
 import struct
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 
 from ..modbus_core.exceptions import ModbusError
-from ..modbus_core.heuristics import check_non_standard_port
+from ..modbus_core.heuristics import check_non_standard_port, analyze_error_cause, analyze_connection_error
 from ..modbus_core.protocol import validate_response
 from ..helpers.formatting import TraceLogger, TableFormatter
 from ..helpers.connection import get_client, get_config_entry
@@ -43,7 +44,15 @@ def _run_read_sync(
     all_registers = []
 
     try:
-        client.connect()
+        try:
+            client.connect()
+        except Exception as e:
+            hint = analyze_connection_error(e)
+            if hint:
+                _LOGGER.error("Connection failed: %s", hint)
+                trace.log(f"Connection failed: {hint}")
+                return {"error": f"Connection Failed: {hint}", "trace": trace.get_trace()}
+            raise e
 
         # Chunking Logic (Max 125 registers per request)
         MAX_CHUNK = 125
@@ -96,8 +105,10 @@ def _run_read_sync(
                 remaining_count -= chunk_size
 
             except ModbusError as e:
+                hint = analyze_error_cause(e)
                 trace.log(f"Read failed at address {current_addr}: {e}")
-                return {"error": str(e), "trace": trace.get_trace()}
+                trace.log(hint)
+                return {"error": f"{e} - {hint}", "trace": trace.get_trace()}
 
         trace.log(f"Success. Received {len(all_registers)} registers.")
 
@@ -114,8 +125,10 @@ def _run_read_sync(
 
     except Exception as e:
         _LOGGER.error("Critical Error during read: %s", e)
+        hint = analyze_error_cause(e)
         trace.log(f"Critical Error: {e}")
-        return {"error": str(e), "trace": trace.get_trace()}
+        trace.log(hint)
+        return {"error": f"{e} - {hint}", "trace": trace.get_trace()}
     finally:
         client.close()
 
@@ -132,6 +145,15 @@ async def read_register(hass: HomeAssistant, call: ServiceCall) -> ServiceRespon
     data_type_filter = call.data.get("data_type", "all")
     timeout = float(call.data.get("timeout", 2.0))
     retries = int(call.data.get("retries", 0))
+
+    # Validation: 32-bit types require at least 2 registers
+    is_32bit = data_type_filter in [
+        "int32", "uint32", "float32",
+        "int32_be", "uint32_be", "float32_be",
+        "int32_le_swap", "float32_le_swap"
+    ]
+    if is_32bit and count < 2:
+        return {"error": "Configuration Error: 32-bit data types require a Count of at least 2 registers."}
 
     reg_type_code = 3 if register_type == "holding" else 4
 

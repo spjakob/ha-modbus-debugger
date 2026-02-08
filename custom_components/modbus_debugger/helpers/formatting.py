@@ -1,4 +1,5 @@
-"""Formatting helpers for Modbus Debugger."""
+"""Formatting helpers for Modbus Debugger (TraceLogger, TableFormatter)."""
+
 
 import struct
 
@@ -11,7 +12,9 @@ class TraceLogger:
 
     def log(self, message: str):
         """Add a message to the trace."""
-        self._trace.append(message)
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self._trace.append(f"[{timestamp}] {message}")
 
     def get_trace(self) -> list[str]:
         """Return the collected trace."""
@@ -27,53 +30,75 @@ class TableFormatter:
     ) -> list[dict]:
         """Format a list of 16-bit registers into a detailed table."""
         table = []
-        for i, val in enumerate(registers):
-            addr = start_address + i
-            row = {
-                "address": addr,
-                "uint16": val,
-                "int16": struct.unpack(">h", struct.pack(">H", val))[0],
-                "hex": f"0x{val:04X}",
-            }
-            chars = struct.pack(">H", val)
-            row["char"] = "".join(chr(b) if 32 <= b <= 126 else "." for b in chars)
+        
+        # Helper to get 32-bit values
+        def get_32bit(idx, endianness='big'):
+            if idx + 1 >= len(registers):
+                return None
+            hi = registers[idx]
+            lo = registers[idx+1]
+            if endianness == 'big':
+                return (hi << 16) | lo
+            elif endianness == 'little':
+                 # Standard Modbus "Little Endian" usually means [CD] [AB] for 0xABCD? 
+                 # Or [AB] [CD]? 
+                 # Let's stick to the requested names and standard conventions.
+                 return (lo << 16) | hi
+            return 0
 
-            if i + 1 < len(registers):
-                next_val = registers[i + 1]
+        # Formatters
+        def to_hex(val): return f"0x{val:04X}"
+        def to_int16(val): return str(struct.unpack('>h', struct.pack('>H', val))[0])
+        def to_uint16(val): return val # Return as integer for consistency
+        def to_float16(val):
+            try: return f"{struct.unpack('>e', struct.pack('>H', val))[0]:.4f}"
+            except: return "N/A"
+        def to_char(val):
+            b_hi = (val >> 8) & 0xFF
+            b_lo = val & 0xFF
+            c_hi = chr(b_hi) if 32 <= b_hi <= 126 else '.'
+            c_lo = chr(b_lo) if 32 <= b_lo <= 126 else '.'
+            return f"{c_hi}{c_lo}"
+        def to_float32(val_32):
+            if val_32 is None: return "-"
+            return f"{struct.unpack('>f', struct.pack('>I', val_32))[0]:.4f}"
+        def to_int32(val_32):
+            if val_32 is None: return "-"
+            return str(struct.unpack('>i', struct.pack('>I', val_32))[0])
+        def to_uint32(val_32):
+            if val_32 is None: return "-"
+            return str(val_32)
 
-                # Only calculate 32-bit values if needed
-                if data_type_filter == "all" or "32" in data_type_filter:
-                    # Big Endian (Standard)
-                    combined = (val << 16) | next_val
-                    if data_type_filter == "all" or "uint32" == data_type_filter:
-                        row["uint32"] = combined
-                    if data_type_filter == "all" or "int32" == data_type_filter:
-                        row["int32"] = struct.unpack(">i", struct.pack(">I", combined))[
-                            0
-                        ]
-                    if data_type_filter == "all" or "float32" == data_type_filter:
-                        row["float32"] = round(
-                            struct.unpack(">f", struct.pack(">I", combined))[0], 4
-                        )
+        for idx, val in enumerate(registers):
+            reg_addr = start_address + idx
+            
+            row = {"address": reg_addr}
+            
+            # 16-bit values and base types
+            if data_type_filter in ['all', 'hex']: row["hex"] = to_hex(val)
+            if data_type_filter in ['all', 'int16']: row["int16"] = to_int16(val)
+            if data_type_filter in ['all', 'uint16']: row["uint16"] = to_uint16(val)
+            if data_type_filter in ['all', 'bin']: row["binary"] = f"{val:016b}"
+            if data_type_filter in ['all', 'char']: row["char"] = to_char(val)
+            if data_type_filter in ['all', 'float16']: row["float16"] = to_float16(val)
 
-                    # Little Endian / Word Swap
-                    combined_swap = (next_val << 16) | val
-                    if data_type_filter == "all" or "int32_le_swap" == data_type_filter:
-                        row["int32_le_swap"] = struct.unpack(
-                            ">i", struct.pack(">I", combined_swap)
-                        )[0]
-                    if (
-                        data_type_filter == "all"
-                        or "float32_le_swap" == data_type_filter
-                    ):
-                        row["float32_le_swap"] = round(
-                            struct.unpack(">f", struct.pack(">I", combined_swap))[0], 4
-                        )
+            # 32-bit values (Lookahead)
+            if idx + 1 < len(registers):
+                val32_be = get_32bit(idx, 'big')
+                val32_le = get_32bit(idx, 'little')
 
-            if data_type_filter != "all":
-                filtered_row = {"address": addr}
-                if data_type_filter in row:
-                    filtered_row[data_type_filter] = row[data_type_filter]
-                row = filtered_row
+                if data_type_filter in ['all', 'int32_be']: row["int32_be"] = to_int32(val32_be)
+                if data_type_filter in ['all', 'uint32_be']: row["uint32_be"] = to_uint32(val32_be)
+                if data_type_filter in ['all', 'float32_be']: row["float32_be"] = to_float32(val32_be)
+                
+                if data_type_filter in ['all', 'int32_le_swap']: row["int32_le_swap"] = to_int32(val32_le)
+                if data_type_filter in ['all', 'float32_le_swap']: row["float32_le_swap"] = to_float32(val32_le)
+
+                # Backwards compatibility / Explicit requests
+                if data_type_filter == 'int32': row["int32"] = to_int32(val32_be)
+                if data_type_filter == 'uint32': row["uint32"] = to_uint32(val32_be)
+                if data_type_filter == 'float32': row["float32"] = to_float32(val32_be)
+
             table.append(row)
+            
         return table

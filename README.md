@@ -1,24 +1,38 @@
 # Home Assistant Modbus Debugger: Diagnostic Toolbox
 
-A robust "Diagnostic Toolbox" to troubleshoot and benchmark Modbus devices (RTU & TCP) directly within Home Assistant.
+A robust "Diagnostic Toolbox" to troubleshoot, benchmark, and discover Modbus devices (RTU & TCP) directly within Home Assistant.
 
-Unlike standard integrations that focus on polling, this tool is designed for **low-level bus analysis** and **device discovery**. It uses a custom synchronous driver to ensure predictable sequential communication, making it ideal for troubleshooting complex RS485 networks.
-
-## Why this integration?
-
-Modbus communication, especially over serial (RS485), is prone to "Head-of-Line Blocking" and "Pipeline Desync." This integration solves these issues with:
-- **Sequential Execution**: All requests are sent strictly one-by-one to avoid gateway congestion.
-- **Smart Drain**: Before every request, the input buffer is cleared to discard "Ghost Data" (leftovers from previous timeouts).
-- **Late Response Recovery**: If a device responds after a timeout, the scanner captures it as a "Late Recovery" result instead of misassigning the data to the next device.
+### Key Features
+*   **Independent Driver**: Builds on a custom, synchronous Modbus implementation (using `socket` and `pyserial`). It operates completely **independently of `pymodbus`**, ensuring no conflicts and allowing for specialized low-level control.
+*   **Device Discovery**: Scan your bus to find responding Slave IDs.
+*   **Traffic Analysis**: View raw TX/RX packets with decoded MBAP headers and function codes.
+*   **Stress Testing**: Benchmark connection stability, latency, and throughput to identify flaky wiring or hardware.
+*   **Intelligent Heuristics**: Automatically detects and warns about:
+    *   Zero-latency responses (Gateway Caching)
+    *   Silent Gateways (Connection blocking)
+    *   Connection Refusals vs Timeouts
 
 ---
 
-## Features
+## Actions (Services)
 
-1.  **Read & Decode Registers**: Read raw register data and see it decoded as Int16, Int32, Float32, Hex, and Char.
-2.  **Sequential Scanning**: Discovery of Unit IDs on your bus with built-in recovery for late-responding devices.
-3.  **Stress Testing**: Benchmark device latency and success rates under heavy load to identify flaky hardware or wiring.
-4.  **Heuristic Warnings**: Get tips on non-standard ports, fast timeouts, or silent gateways.
+### 1. Read Register (`modbus_debugger.read_register`)
+Read raw data from a device and see it decoded instantly (Int16, Float32, Hex, etc.).
+- **Slave ID**: Address of the target device (1-247).
+- **Register**: Starting address.
+- **Trace**: See the exact query sent and response received.
+
+### 2. Scan Devices (`modbus_debugger.scan_devices`)
+Iterate through a range of Slave IDs to find active devices.
+- **Range**: Start and End Slave ID.
+- **Scan Mode**:
+    - **Standard**: Sequential, safe scan (wait for timeout on each).
+    - **Smart**: Rapidly scans the entire range to detect active devices much faster than the standard method.
+
+### 3. Stress Test (`modbus_debugger.stress_test`)
+Hammer a device with requests to verify stability.
+- **Throughput**: Measure actual bus speed in bits per second.
+- **Error Analysis**: Distinguishes between network failures (IP/Port) and device failures (Wiring/Baudrate).
 
 ---
 
@@ -37,16 +51,6 @@ Modbus communication, especially over serial (RS485), is prone to "Head-of-Line 
 
 ---
 
-## Technical Status
-
-> [!IMPORTANT]
-> **Independent Implementation**: This integration uses a native, synchronous Modbus driver built directly on `socket` and `pyserial`. It is **NOT** dependent on `pymodbus`, which allows for the specialized error recovery and timing analysis features.
-
-> [!WARNING]
-> **Experimental Features**: While Modbus TCP is stable, **Serial (RTU)** and **RTU-over-TCP** support are considered experimental. They require more community feedback and are not yet 100% tested across all hardware variants.
-
----
-
 ## Configuration
 
 1.  Go to **Settings** > **Devices & Services**.
@@ -55,27 +59,6 @@ Modbus communication, especially over serial (RS485), is prone to "Head-of-Line 
 4.  Choose your connection type:
     *   **TCP**: Enter Host IP and Port (default 502).
     *   **Serial (RTU)**: Enter Port (e.g., `/dev/ttyUSB0`), Baudrate, Parity, etc.
-
----
-
-## Actions (Services)
-
-### 1. Read Register (`modbus_debugger.read_register`)
-Read a range of registers and view a formatted table of interpretations.
-- **Hub ID**: The configured connection profile.
-- **Unit ID**: Slave ID (1-247).
-- **Register Address**: Start address.
-- **Count**: Number of registers (auto-chunks into Modbus-compliant requests).
-
-### 2. Scan Devices (`modbus_debugger.scan_devices`)
-Discover devices on the bus by checking for responses across a range of Unit IDs.
-- **Range**: Start and End Unit ID.
-- **Late Recovery**: Automatically logs if a device responded late during the scan.
-
-### 3. Stress Test (`modbus_debugger.stress_test_device`)
-Measure the reliability of a device by sending multiple requests in rapid succession.
-- **Iterations**: Number of requests to send (default 50).
-- **Statistics**: Returns success rate, min/max/avg latency.
 
 ---
 

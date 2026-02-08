@@ -5,7 +5,7 @@ read_register:
     hub_id:
       name: Modbus Hub
       description: The Modbus Hub to use.
-      required: false
+      required: true
       selector:
         config_entry:
           integration: modbus_debugger
@@ -111,7 +111,7 @@ scan_devices:
     hub_id:
       name: Modbus Hub
       description: The Modbus Hub to use.
-      required: false
+      required: true
       selector:
         config_entry:
           integration: modbus_debugger
@@ -199,6 +199,18 @@ scan_devices:
       default: false
       selector:
         boolean: {}
+    scan_mode:
+      name: Scan Mode
+      description: "Standard: Sequential safe scan. Smart: Rapid-fire pipelined scan (Finds first device)."
+      required: true
+      default: standard
+      selector:
+        select:
+          options:
+            - label: Standard (Sequential)
+              value: standard
+            - label: Smart (Fast Pipelined)
+              value: smart
 
 stress_test_device:
   name: Stress Test Device
@@ -206,7 +218,7 @@ stress_test_device:
   fields:
     hub_id:
       name: Modbus Hub
-      required: false
+      required: true
       selector: { config_entry: { integration: modbus_debugger } }
     slave_id:
       name: Modbus Address
@@ -250,3 +262,16 @@ stress_test_device:
       required: true
       default: 0
       selector: { number: { min: 0, max: 5, mode: box } }
+    verbosity:
+      name: Verbose Level
+      required: true
+      default: basic
+      selector:
+        select:
+          options:
+            - label: Basic (Summary Only)
+              value: basic
+            - label: Detailed (Connection Info)
+              value: detailed
+            - label: Debug (Log Every Request)
+              value: debug

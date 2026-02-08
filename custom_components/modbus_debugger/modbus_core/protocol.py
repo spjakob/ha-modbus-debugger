@@ -1,4 +1,5 @@
-"""Modbus Protocol Handling."""
+"""Modbus Protocol Handling (PDU parsing, CRC, Packet Building)."""
+
 
 import struct
 from .exceptions import ModbusInvalidResponseError, ModbusExceptionResponseError
@@ -155,3 +156,123 @@ def validate_response(
         violations.append(gap_warn)
 
     return violations
+
+
+
+
+def decode_packet_string(data: bytes) -> str:
+    """
+    Decode a raw Modbus packet into a human-readable string.
+    Always includes the raw hex at the end for safety.
+    """
+    raw_hex = data.hex().upper()
+    try:
+        # PDU Handling logic
+        # We need to guess if it's TCP or RTU to find PDU start.
+        
+        fc = 0
+        pdu = b''
+        header_summary = ""
+        
+        # Try TCP (Header 7 bytes usually: TID(2) PID(2) LEN(2) UID(1))
+        # Valid Modbus TCP header has PID=0
+        # Also check if declared Length matches actual data length
+        is_tcp = False
+        if len(data) > 7 and data[2] == 0 and data[3] == 0:
+            declared_len = struct.unpack(">H", data[4:6])[0]
+            if len(data) - 6 == declared_len:
+                is_tcp = True
+
+        if is_tcp:
+             # Decode MBAP
+             tid, pid, length, uid = struct.unpack(">HHHB", data[:7])
+             pdu = data[7:]
+             header_summary = f"[TCP TID={tid} UID={uid}] "
+        
+        # Try RTU (Addr(1) PDU... CRC(2))
+        elif len(data) > 3:
+             # Basic length check passed. 
+             # To be safer, we can check CRC if we want to be sure it's RTU.
+             # However, logging might want to show "Bad CRC" packets too.
+             # Let's check if it *looks* like a standard FC.
+             
+             uid = data[0]
+             potential_fc = data[1]
+             
+             # If valid CRC, we definitely treat as RTU
+             is_valid_crc = validate_rtu_crc(data)
+             
+             # If CRC invalid, but FC is standard, we might still want to decode 
+             # but note the CRC error? Or just treat as Raw?
+             # User asked "not data get lost". Raw hex is always at end.
+             # Let's only decode structure if CRC is valid OR it looks very much like Modbus.
+             
+             if is_valid_crc:
+                 pdu = data[1:-2]
+                 header_summary = f"[RTU UID={uid}] "
+             elif (
+                 potential_fc in [3, 4, 6, 16] 
+                 or (
+                     (potential_fc & 0x80) 
+                     and (potential_fc & 0x7F) in [3, 4, 6, 16]
+                 )
+             ):
+                  # Looks like Modbus (valid FC) but bad CRC?
+                  pdu = data[1:-2]
+                  header_summary = f"[RTU(BadCRC) UID={uid}] "
+        
+        if not pdu:
+            return f"Raw: {raw_hex}"
+        fc = pdu[0]
+        summary = f"FC{fc}"
+
+        # READ HOLDING (03) / READ INPUT (04)
+        if fc in [3, 4]: 
+            fc_name = "ReadHolding" if fc == 3 else "ReadInput"
+            # Request: [FC][AddrHi][AddrLo][CountHi][CountLo] (5 bytes)
+            if len(pdu) == 5:
+                addr = struct.unpack(">H", pdu[1:3])[0]
+                count = struct.unpack(">H", pdu[3:5])[0]
+                summary = f"{fc_name}(Addr={addr}, Cnt={count})"
+            # Response: [FC][Bytes][Data...]
+            elif len(pdu) >= 2:
+                 byte_count = pdu[1]
+                 # Peek at first register value if available
+                 val_str = ""
+                 if byte_count >= 2 and len(pdu) >= 4:
+                     val = struct.unpack(">H", pdu[2:4])[0]
+                     val_str = f", 1st={val}"
+                 summary = f"{fc_name}Resp(Bytes={byte_count}{val_str})"
+
+        # WRITE SINGLE REGISTER (06)
+        elif fc == 6:
+            # Request/Response: [FC][AddrHi][AddrLo][ValHi][ValLo] (5 bytes)
+            if len(pdu) == 5:
+                addr = struct.unpack(">H", pdu[1:3])[0]
+                val = struct.unpack(">H", pdu[3:5])[0]
+                summary = f"WriteSingle(Addr={addr}, Val={val})"
+
+        # WRITE MULTIPLE REGISTERS (16 / 0x10)
+        elif fc == 16:
+             # Request: [FC][AddrHi][AddrLo][CountHi][CountLo][Bytes][Data...]
+             if len(pdu) >= 6:
+                 addr = struct.unpack(">H", pdu[1:3])[0]
+                 count = struct.unpack(">H", pdu[3:5])[0]
+                 byte_count = pdu[5]
+                 summary = f"WriteMultiple(Addr={addr}, Cnt={count}, Bytes={byte_count})"
+             # Response: [FC][AddrHi][AddrLo][CountHi][CountLo]
+             elif len(pdu) == 5:
+                 addr = struct.unpack(">H", pdu[1:3])[0]
+                 count = struct.unpack(">H", pdu[3:5])[0]
+                 summary = f"WriteMultipleResp(Addr={addr}, Cnt={count})"
+
+        elif fc & 0x80: # Exception
+             if len(pdu) >= 2:
+                 code = pdu[1]
+                 summary = f"Exception(Code={code})"
+
+        return f"{header_summary}{summary} [{raw_hex}]"
+
+    except Exception:
+        # Fallback to raw hex if decoding fails
+        return f"Raw(DecodeErr): {raw_hex}"

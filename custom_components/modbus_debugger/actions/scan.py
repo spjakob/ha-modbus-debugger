@@ -1,4 +1,5 @@
-"""Scan Devices Action."""
+"""Scan Devices Action (Synchronous execution with heuristics)."""
+
 
 import time
 import logging
@@ -15,6 +16,8 @@ from ..modbus_core.heuristics import (
     check_non_standard_port,
     check_silent_gateway,
     check_ghost_data,
+    analyze_error_cause,
+    analyze_connection_error,
 )
 from ..helpers.formatting import TraceLogger
 from ..helpers.connection import get_client, get_config_entry
@@ -97,7 +100,19 @@ def _run_scan_sync(
     ghost_count = 0
 
     try:
-        client.connect()
+        try:
+            client.connect()
+        except Exception as e:
+            hint = analyze_connection_error(e)
+            if hint:
+                log(f"Connection failed: {hint}", level="error")
+                return {
+                     "found_devices": [],
+                     "trace": trace.get_trace(),
+                     "count": 0,
+                     "error": f"Connection Failed: {hint}"
+                }
+            raise e
 
         fc = reg_type_code
         req_data = struct.pack(">HH", register, 1)  # Read 1 register at 'register'
@@ -242,12 +257,160 @@ def _run_scan_sync(
     # duration is calculated outside in async wrapper, but we can't access it here easily for logging inside _run.
     # We'll just log scanned/found here.
     log(f"Scan Complete. Scanned: {total_scanned}, Found: {total_found}.", level="info")
+    
+    if total_found == 0 and error_count > 0:
+        # No devices found, but errors occurred. Give a hint.
+        # Use a generic error for analysis or try to capture the last error type?
+        # We can use a generic ModbusTimeoutError if we saw timeouts, 
+        # or just specific advice if we saw exceptions.
+        # Simple approach: If timeouts > 0, check Timeout.
+        hint = ""
+        has_timeout = any(r['status'] == 'timeout' for r in scan_results)
+        if has_timeout:
+             hint = analyze_error_cause(ModbusTimeoutError("Scan Timeouts"))
+        
+        if hint:
+             log(f"Hint: {hint}", level="warning")
 
     return {
         "found_devices": sorted(found_devices, key=lambda x: x.get("slave_id", 0)),
         "trace": trace.get_trace(),
         "count": len(found_devices),
     }
+
+
+def _run_smart_scan(
+    config_data,
+    start_slave,
+    end_slave,
+    register,
+    reg_type_code,
+    timeout,
+    retries,
+    verbosity,
+    log_to_file,
+):
+    """Smart Scan: Fire & Flush (Find First)."""
+    trace = TraceLogger()
+    show_trace = verbosity in ["detailed", "debug"]
+    show_debug = verbosity == "debug"
+
+    def log(msg, level="info"):
+        if log_to_file or level in ["warning", "error"]:
+            if level == "error":
+                _LOGGER.error(msg)
+            elif level == "warning":
+                _LOGGER.warning(msg)
+            elif level == "debug":
+                _LOGGER.debug(msg)
+            else:
+                _LOGGER.info(msg)
+        if level in ["error", "warning"] or show_trace:
+            if level == "debug" and not show_debug:
+                return
+            trace.log(msg)
+
+    target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
+    log(f"Starting SMART Scan (Fire & Flush) on {target}. Range {start_slave}-{end_slave}.", level="info")
+
+    client = get_client(config_data, timeout, retries)
+    if show_debug:
+        client.trace_callback = lambda m: log(m, level="debug")
+
+    found_devices = []
+    
+    try:
+        try:
+            client.connect()
+        except Exception as e:
+            hint = analyze_connection_error(e)
+            if hint:
+                log(f"Connection failed: {hint}", level="error")
+                return {"found_devices": [], "trace": trace.get_trace(), "error": f"Connection Failed: {hint}"}
+            raise e
+
+        req_data = struct.pack(">HH", register, 1)
+        confirmed_id = None
+
+        # Phase 1: Fire (No Peek)
+        # We assume the gateway buffers requests.
+        log("Phase 1: Rapid Fire (Sends all)...", level="info")
+        num_targets = end_slave - start_slave + 1
+        
+        # Calculate Max Wait Time
+        # Simplified: (Num * Timeout)
+        # We assume the user has set 'timeout' correctly for their gateway.
+        max_duration = num_targets * timeout
+        log(f"Max Scan Duration (If all timeout): {max_duration:.1f}s", level="debug")
+        
+        for slave_id in range(start_slave, end_slave + 1):
+            client.send_raw_request(slave_id, reg_type_code, req_data)
+
+
+        # Phase 2: Tail Listen 
+        log(f"Phase 2: Tail Wait (Up to {max_duration:.1f}s)...", level="info")
+        start_tail = time.perf_counter()
+        # We must wait max_duration to catch devices at the end of the chain
+        
+        while (time.perf_counter() - start_tail) < max_duration:
+            try:
+                resp = client.recv_raw_response(0.1)
+                if resp:
+                    resp_id, _, _, _ = resp
+                    if confirmed_id is None:
+                        log(f"Activity detected on Slave {resp_id} (Tail)!", level="warning")
+                        confirmed_id = resp_id
+                        break
+            except Exception as e:
+                log(f"Tail Error: {e}", level="debug")
+
+        # Phase 3: Marker & Flush
+        if confirmed_id is not None:
+            log(f"Phase 3: Sending Marker to Slave {confirmed_id} and Flushing...", level="info")
+            client.send_raw_request(confirmed_id, reg_type_code, req_data)
+            marker_sent_time = time.perf_counter()
+            log(f"Waiting for Marker Reply (Up to {max_duration:.1f}s)...", level="debug")
+            
+            while (time.perf_counter() - marker_sent_time) < max_duration:
+                try:
+                    resp = client.recv_raw_response(0.1)
+                    if resp:
+                        resp_id, _, resp_val_bytes, _ = resp
+                        
+                        val = 0
+                        if len(resp_val_bytes) >= 2:
+                             val = struct.unpack(">H", resp_val_bytes[0:2])[0]
+                        
+                        log(f"Flush: RX from {resp_id} (Val {val})", level="debug")
+                        
+                        is_new = True
+                        for d in found_devices:
+                            if d["slave_id"] == resp_id:
+                                is_new = False
+                                break
+                        if is_new:
+                             found_devices.append({"slave_id": resp_id, "value": val})
+
+                        if resp_id == confirmed_id:
+                            log("Marker Reply Confirmed! Scan Complete.", level="info")
+                            return {"found_devices": found_devices, "trace": trace.get_trace(), "count": len(found_devices)}
+                    
+                except Exception as e:
+                     log(f"Flush Error: {e}", level="debug")
+        else:
+            log("No active devices found in range.", level="info")
+
+    except Exception as e:
+        log(f"Critical Scan Error: {e}", level="error")
+    finally:
+        client.close()
+
+    return {
+        "found_devices": found_devices,
+        "trace": trace.get_trace(),
+        "count": len(found_devices),
+    }
+
 
 
 async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
@@ -263,13 +426,16 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     retries = int(call.data.get("retries", 0))
     verbosity = call.data.get("verbosity", "basic")
     log_to_file = call.data.get("log_to_file", False)
+    scan_mode = call.data.get("scan_mode", "standard")
 
     reg_type_code = 3 if register_type == "holding" else 4
 
     start_time = time.perf_counter()
 
+    target_func = _run_smart_scan if scan_mode == "smart" else _run_scan_sync
+
     result = await hass.async_add_executor_job(
-        _run_scan_sync,
+        target_func,
         entry.data,
         start_slave,
         end_slave,
@@ -282,7 +448,12 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     )
 
     duration = time.perf_counter() - start_time
-    result["scan_duration"] = duration
+    result["scan_duration"] = round(duration, 2)
     result["scanned_range"] = f"{start_slave}-{end_slave}"
+    result["mode"] = scan_mode
+    
+    num_scanned = end_slave - start_slave + 1
+    if num_scanned > 0:
+         result["time_per_device_ms"] = int((duration / num_scanned) * 1000)
 
     return result
