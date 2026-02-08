@@ -12,7 +12,6 @@ CONF_BYTESIZE = "bytesize"
 CONF_METHOD = "method"
 CONF_TIMEOUT = "timeout"
 CONF_NAME = "name"
-CONF_IS_DEFAULT = "is_default"
 
 CONNECTION_TYPE_TCP = "tcp"
 CONNECTION_TYPE_SERIAL = "serial"

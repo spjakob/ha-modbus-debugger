@@ -181,7 +181,7 @@ scan_devices:
     verbosity:
       name: Verbose Level
       description: Control the level of detail in the output.
-      required: false
+      required: true
       default: basic
       selector:
         select:
@@ -202,7 +202,7 @@ scan_devices:
     scan_mode:
       name: Scan Mode
       description: "Standard: Sequential safe scan. Smart: Rapid-fire pipelined scan (Finds first device)."
-      required: false
+      required: true
       default: standard
       selector:
         select:
@@ -264,7 +264,7 @@ stress_test_device:
       selector: { number: { min: 0, max: 5, mode: box } }
     verbosity:
       name: Verbose Level
-      required: false
+      required: true
       default: basic
       selector:
         select:

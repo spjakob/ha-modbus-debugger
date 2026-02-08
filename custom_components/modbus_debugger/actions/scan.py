@@ -389,7 +389,7 @@ def _run_smart_scan(
                                 is_new = False
                                 break
                         if is_new:
-                             found_devices.append({"slave_id": resp_id, "value": val, "note": "Smart Scan"})
+                             found_devices.append({"slave_id": resp_id, "value": val})
 
                         if resp_id == confirmed_id:
                             log("Marker Reply Confirmed! Scan Complete.", level="info")
@@ -448,8 +448,11 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     )
 
     duration = time.perf_counter() - start_time
-    result["scan_duration"] = duration
+    result["scan_duration"] = round(duration, 2)
     result["scanned_range"] = f"{start_slave}-{end_slave}"
     result["mode"] = scan_mode
+    
+    if result["count"] > 0:
+         result["time_per_device_ms"] = round((duration / result["count"]) * 1000, 2)
 
     return result

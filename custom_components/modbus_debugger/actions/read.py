@@ -146,6 +146,15 @@ async def read_register(hass: HomeAssistant, call: ServiceCall) -> ServiceRespon
     timeout = float(call.data.get("timeout", 2.0))
     retries = int(call.data.get("retries", 0))
 
+    # Validation: 32-bit types require at least 2 registers
+    is_32bit = data_type_filter in [
+        "int32", "uint32", "float32",
+        "int32_be", "uint32_be", "float32_be",
+        "int32_le_swap", "float32_le_swap"
+    ]
+    if is_32bit and count < 2:
+        return {"error": "Configuration Error: 32-bit data types require a Count of at least 2 registers."}
+
     reg_type_code = 3 if register_type == "holding" else 4
 
     return await hass.async_add_executor_job(

@@ -89,17 +89,23 @@ class TableFormatter:
             if data_type_filter in ['all', 'float16']: row["float16"] = to_float16(val)
 
             # 32-bit values (Lookahead)
+            # Only show if we have enough registers (or if explicitly requested, but here we handle 'all')
+            # If explicit 32-bit type was requested but we only have 1 register, the action should have validated/erred.
+            # Here we just ensure we don't show phantom data in 'all' mode.
+            show_32bit = len(registers) >= 2
+
             val32_be = get_32bit(idx, 'big')
             val32_le = get_32bit(idx, 'little')
 
-            if data_type_filter in ['all', 'int32_be']: row["int32_be"] = to_int32(val32_be)
-            if data_type_filter in ['all', 'uint32_be']: row["uint32_be"] = to_uint32(val32_be)
-            if data_type_filter in ['all', 'float32_be']: row["float32_be"] = to_float32(val32_be)
+            if show_32bit:
+                if data_type_filter in ['all', 'int32_be']: row["int32_be"] = to_int32(val32_be)
+                if data_type_filter in ['all', 'uint32_be']: row["uint32_be"] = to_uint32(val32_be)
+                if data_type_filter in ['all', 'float32_be']: row["float32_be"] = to_float32(val32_be)
+                
+                if data_type_filter in ['all', 'int32_le_swap']: row["int32_le_swap"] = to_int32(val32_le)
+                if data_type_filter in ['all', 'float32_le_swap']: row["float32_le_swap"] = to_float32(val32_le)
             
-            if data_type_filter in ['all', 'int32_le_swap']: row["int32_le_swap"] = to_int32(val32_le)
-            if data_type_filter in ['all', 'float32_le_swap']: row["float32_le_swap"] = to_float32(val32_le)
-            
-            # Backwards compatibility names if needed (e.g. 'int32' maps to 'int32_be' usually)
+            # Backwards compatibility / Explicit requests (Logic in Read Action ensures we have enough data if specific type chosen)
             if data_type_filter == 'int32': row["int32"] = to_int32(val32_be)
             if data_type_filter == 'uint32': row["uint32"] = to_uint32(val32_be)
             if data_type_filter == 'float32': row["float32"] = to_float32(val32_be)
