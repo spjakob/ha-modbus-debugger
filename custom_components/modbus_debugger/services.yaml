@@ -262,13 +262,6 @@ stress_test_device:
       required: true
       default: 0
       selector: { number: { min: 0, max: 5, mode: box } }
-    alternate:
-      name: Defeat Cache (Alternating Read)
-      description: Read 'register' then 'register+1' in loop to defeat Gateway caching.
-      required: false
-      default: false
-      selector:
-        boolean: {}
     verbosity:
       name: Verbose Level
       required: false

@@ -332,7 +332,7 @@ def _run_smart_scan(
         req_data = struct.pack(">HH", register, 1)
         confirmed_id = None
 
-        # Phase 1: Fire & Peek (Low Timeout)
+        # Phase 1: Fire (No Peek)
         # We assume the gateway buffers requests.
         log("Phase 1: Rapid Fire (Sends all)...", level="info")
         num_targets = end_slave - start_slave + 1

@@ -31,7 +31,6 @@ Iterate through a range of Slave IDs to find active devices.
 
 ### 3. Stress Test (`modbus_debugger.stress_test`)
 Hammer a device with requests to verify stability.
-- **Alternating Mode**: Toggle between two registers to defeat gateway caching.
 - **Throughput**: Measure actual bus speed in bits per second.
 - **Error Analysis**: Distinguishes between network failures (IP/Port) and device failures (Wiring/Baudrate).
 

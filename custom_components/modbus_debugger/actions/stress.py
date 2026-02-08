@@ -15,7 +15,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _run_stress_sync(
-    config_data, slave_id, register, count, reg_type_code, iterations, timeout, retries, verbosity, alternate
+    config_data, slave_id, register, count, reg_type_code, iterations, timeout, retries, verbosity
 ):
     trace = TraceLogger()
     target = f"{config_data.get('host', 'Serial')}:{config_data.get('port', '')}"
@@ -75,9 +75,6 @@ def _run_stress_sync(
 
             remaining = count
             current_addr = register
-            # Alternating Logic: If enabled, toggle between register and register+1
-            if alternate and (i % 2 == 1):
-                current_addr = register + 1
 
             iter_bytes = 0
             
@@ -201,5 +198,5 @@ async def stress_test(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse
         float(call.data.get("timeout", 2.0)),
         int(call.data.get("retries", 0)),
         call.data.get("verbosity", "basic"),
-        call.data.get("alternate", False),
+    call.data.get("verbosity", "basic"),
     )
