@@ -452,7 +452,8 @@ async def scan_devices(hass: HomeAssistant, call: ServiceCall) -> ServiceRespons
     result["scanned_range"] = f"{start_slave}-{end_slave}"
     result["mode"] = scan_mode
     
-    if result["count"] > 0:
-         result["time_per_device_ms"] = round((duration / result["count"]) * 1000, 2)
+    num_scanned = end_slave - start_slave + 1
+    if num_scanned > 0:
+         result["time_per_device_ms"] = int((duration / num_scanned) * 1000)
 
     return result
