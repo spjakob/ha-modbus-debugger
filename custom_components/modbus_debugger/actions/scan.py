@@ -348,12 +348,11 @@ def _run_smart_scan(
 
 
         # Phase 2: Tail Listen 
-        log("Phase 2: Tail Wait...", level="info")
+        log(f"Phase 2: Tail Wait (Up to {max_duration:.1f}s)...", level="info")
         start_tail = time.perf_counter()
-        # Wait briefly to catch the first few timeouts or fast replies
-        tail_limit = max(timeout, 1.0) 
+        # We must wait max_duration to catch devices at the end of the chain
         
-        while (time.perf_counter() - start_tail) < tail_limit:
+        while (time.perf_counter() - start_tail) < max_duration:
             try:
                 resp = client.recv_raw_response(0.1)
                 if resp:
